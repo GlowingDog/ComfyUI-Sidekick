@@ -3,7 +3,7 @@ import asyncio
 import logging
 
 from .. import config, pending
-from . import cli_claude, loop_openai
+from . import cli_claude, cli_codex, loop_openai
 
 log = logging.getLogger("sidekick")
 
@@ -12,6 +12,8 @@ async def _run_provider(session, client_id, text, provider, model, cfg):
     kind = provider.get("kind")
     if kind == "claude_cli":
         return await cli_claude.run(session, client_id, text, provider, model)
+    if kind == "codex_cli":
+        return await cli_codex.run(session, client_id, text, provider, model)
     if kind == "openai":
         return await loop_openai.run(session, client_id, text, provider, model, cfg)
     raise RuntimeError(f"Provider kind '{kind}' is not available yet.")

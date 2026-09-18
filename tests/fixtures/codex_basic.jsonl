@@ -1,0 +1,9 @@
+{"type":"thread.started","thread_id":"01a0b6dc-3463-7511-bf35-a134e21825c0"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Under-development features enabled: skip_host_skill_discovery. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in C:\\Users\\PC\\.codex\\config.toml."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"error","message":"Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest."}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"I’ll check the workflow’s CFG value.\n"}}
+{"type":"item.started","item":{"id":"item_3","type":"mcp_tool_call","server":"sidekick","tool":"get_workflow","arguments":{},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_3","type":"mcp_tool_call","server":"sidekick","tool":"get_workflow","arguments":{},"result":{"content":[{"type":"text","text":"nodes: 1\n 3|KSampler||100,100|315x262\n   w: cfg=8 scheduler=\"normal\""}],"structured_content":null},"error":null,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_4","type":"agent_message","text":"The cfg value is 8."}}
+{"type":"turn.completed","usage":{"input_tokens":58339,"cached_input_tokens":43648,"cache_write_input_tokens":0,"output_tokens":87,"reasoning_output_tokens":0}}

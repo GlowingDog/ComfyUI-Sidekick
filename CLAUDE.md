@@ -38,7 +38,8 @@ Browser (web/)                                    Python (sidekick/, inside the 
 - Claude argv is in `cli_claude.build_argv`. `--setting-sources project` keeps the OAuth login but drops the user's global hooks/plugins (verified: `plugins: []`). `--bare` would break OAuth (skips keychain). `--allowedTools mcp__sidekick` allows every tool of our server. `--tools "WebSearch,WebFetch"` removes file/shell tools.
 - Claude probes `server/discover` first; answering JSON-RPC "method not found" makes it fall back to `initialize` (works). It sends `_meta["claudecode/toolUseId"]` with tool calls.
 - stream-json shapes: see `tests/fixtures/claude_basic.jsonl`. One `assistant` message per content block, interleaved with `stream_event`s; thinking text is empty (signature only).
-- Codex: streamable-HTTP MCP works via `-c mcp_servers.sidekick.url=…` + `bearer_token_env_var`; `--ignore-user-config` keeps auth. **Open problem:** in `exec` mode MCP calls fail with "MCP tool call requires approval, but approval policy is never" (`tests/fixtures/codex_mcp_denied.jsonl`) — needs a per-server/tool approval config key (P2). Codex also loads `~/.agents/skills` (≈60k input tokens/turn) — find a way to disable.
+- Codex argv is in `cli_codex.build_argv`. Streamable-HTTP MCP via `-c mcp_servers.sidekick.url=…` + `bearer_token_env_var`; `--ignore-user-config` keeps auth. In `exec` mode MCP calls are refused ("approval policy is never", `tests/fixtures/codex_mcp_denied.jsonl`) unless `mcp_servers.sidekick.default_tools_approval_mode="approve"` is set (`tests/fixtures/codex_basic.jsonl`). System prompt goes in `developer_instructions`; web search is `web_search="live"`. Options go **before** `resume <thread_id>`. Codex still loads `~/.agents/skills` (≈58k input tokens/turn); no off-switch found yet.
+- Cheap config oracle: `codex exec --strict-config -c <key>=… -m bogus-model` — an unknown key errors instantly, a valid key reaches the model and 400s, no tokens spent.
 
 ## Frontend facts (frontend 1.48.6)
 - Import only `/scripts/app.js` and `/scripts/api.js`. `graph.links` is a **Map** (`graphCtx.getLink`). Tools must use `graphCtx.graph()` (the graph shown on the canvas — may be a subgraph), never `app.graph` directly.
@@ -48,6 +49,7 @@ Browser (web/)                                    Python (sidekick/, inside the 
 - PrimeIcons classes do not work inside the Shadow root; use text glyphs / inline SVG.
 
 ## Tests
-- Python: `..\..\..\python_embeded\python.exe tests\py\test_core.py`
+- Python (run each file; `tests/py` is not an importable package name): `..\..\..\python_embeded\python.exe tests\py\test_core.py`, `…\test_openai_loop.py`, `…\test_codex.py`
+- **Never patch source files with ad-hoc Python/sed scripts** — use the Edit tool (scripted rewrites make the harness re-echo whole files into context).
 - JS (pure modules): `node --test tests/js/pure.test.mjs`
 - Token-free live checks: enable Dev mode in Sidekick settings, then `POST /sidekick/dev/call_tool {tool, args, client_id}` (loopback only).

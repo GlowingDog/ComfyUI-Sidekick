@@ -19,8 +19,12 @@ Full approved plan: `C:\Users\PC\.claude\plans\i-would-like-to-compressed-finch.
 - [ ] Pane tests (`web/dev/pane_tests.js`, `window.SidekickTests`)
 
 ## P2 — Other brains
-- [ ] OpenAI-compatible loop (aiohttp SSE, tool-call deltas, `reasoning_content`), provider settings UI (base_url, key, model picker via `/models`)
-- [ ] Codex provider. Open: MCP approval in `exec` mode ("approval policy is never"), disable `~/.agents/skills` loading (~60k tokens/turn), web search config key, JSONL mapper (fixture: `tests/fixtures/codex_mcp_denied.jsonl`)
+- [x] OpenAI-compatible loop (`agent/loop_openai.py`: aiohttp SSE, tool-call delta accumulation, `reasoning_content`/`reasoning`, `stream_options` fallback on 400, history trimming, 40-step cap), `GET /sidekick/providers/models`, provider settings UI (base URL, write-only key, model datalist, add/remove)
+  - Verified only against a local mock SSE server (`tests/py/test_openai_loop.py`). **Not yet run against a real provider** (no API key on hand) — first real DeepSeek/OpenRouter/NanoGPT turn still owed.
+- [x] Codex provider (`agent/cli_codex.py`). Spike-verified flags (codex-cli 0.155.0): HTTP MCP via `-c mcp_servers.sidekick.url` + `bearer_token_env_var`; **`default_tools_approval_mode="approve"` fixes "approval policy is never"**; `developer_instructions`, `web_search="live"`, `tools.web_search` are valid keys; `exec <opts> resume <thread_id> -` works; `--ignore-user-config` keeps the login.
+  - Mapper + argv unit-tested from fixtures (`tests/py/test_codex.py`). **Live turn through the real stack (ComfyUI + browser bridge) not yet run** — do this first next session.
+  - Trick: `--strict-config` + `-m bogus-model` validates a config key without spending tokens (wrong key → instant error, right key → model 400).
+- [ ] Codex loads `~/.agents/skills` (~58k input tokens/turn, mostly cached). No working off-switch found: `--disable skills`, `skills.enabled`, `skills.include_host` are unknown; `skip_host_skill_discovery` is under-development and had no effect.
 
 ## P3 — Sophisticated editing + interaction
 - [ ] auto_layout (layered DAG, groups as super-nodes, reroutes, dry_run), Vue-nodes check of `setNodePos`
