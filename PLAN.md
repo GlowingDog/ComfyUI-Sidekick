@@ -13,7 +13,9 @@ Full approved plan: `C:\Users\PC\.claude\plans\i-would-like-to-compressed-finch.
 - [x] Claude CLI provider (argv builder, stream-json mapper, resume, retry without resume)
 - [x] Frontend: graphCtx, read/edit tools, connect auto-match, widget coercion, RPC executor, chat panel (Shadow DOM), sidebar tab, settings + chat list overlays
 - [x] Unit tests: `tests/py/test_core.py` (12), `tests/js/pure.test.mjs` (5)
-- [ ] Live verification in ComfyUI: routes load, sidebar renders, dev `call_tool` builds a txt2img graph with one undo step per call, MCP via curl, real chat turn with Claude
+- [x] Live verification (2026-09-18, second instance on :8189): routes load, sidebar panel mounts, dev `call_tool` built a 7-node txt2img graph via one `edit_graph`, groups, combo/clamp coercion, connect diagnostics, one undo step per call, MCP 401 without token, real Claude CLI turn (haiku) changed cfg/sampler and added a linked PreviewImage
+- [ ] Known rough edge: `create_group` around nodes that sit inside another group's area overlaps it — needs auto_layout (P3)
+- [ ] Note: node ids are **strings** in frontend 1.48.6 — always compare with `String()`; geometry setters on `LGraphGroup` throw unless the group is already in a graph
 - [ ] Pane tests (`web/dev/pane_tests.js`, `window.SidekickTests`)
 
 ## P2 — Other brains

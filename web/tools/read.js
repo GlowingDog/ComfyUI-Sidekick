@@ -62,8 +62,8 @@ function groupMembers(group) {
 }
 
 export function getWorkflow({ node_ids, include_widgets = true } = {}) {
-  const want = Array.isArray(node_ids) && node_ids.length ? new Set(node_ids.map(Number)) : null;
-  const nodes = allNodes().filter((n) => !want || want.has(n.id));
+  const want = Array.isArray(node_ids) && node_ids.length ? new Set(node_ids.map(String)) : null;
+  const nodes = allNodes().filter((n) => !want || want.has(String(n.id)));
   const groups = allGroups();
   const wf = app.extensionManager?.workflow?.activeWorkflow;
   const inSubgraph = app.rootGraph && graph() !== app.rootGraph;

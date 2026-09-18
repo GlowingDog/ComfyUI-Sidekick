@@ -59,7 +59,9 @@ def outputs_of(node):
 
 def _pack(node):
     mod = str(node.get("python_module") or "")
-    return mod.split(".", 1)[1] if mod.startswith("custom_nodes.") else (mod or "core")
+    if mod.startswith("custom_nodes."):
+        return mod.split(".", 1)[1]
+    return "core"  # nodes, comfy_extras.*, comfy_api_nodes.*
 
 
 def _tokens(text):
@@ -107,7 +109,7 @@ def search(info, query, limit=12, category=None, input_type=None, output_type=No
             continue
         if node.get("deprecated"):
             score -= 5
-        if pack == "core" or pack.startswith("comfy"):
+        if pack == "core":
             score += 1  # prefer built-ins on ties
         hits.append((score, -len(name), name, node))
     hits.sort(reverse=True)

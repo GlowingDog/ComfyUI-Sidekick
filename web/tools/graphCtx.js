@@ -30,7 +30,8 @@ export function getLink(id) {
 }
 
 export function nodeById(id) {
-  const n = graph().getNodeById(Number(id));
+  // Node ids may be numbers or strings depending on the frontend build: compare as strings.
+  const n = graph().getNodeById(id) ?? allNodes().find((x) => String(x.id) === String(id));
   if (!n) {
     const ids = allNodes().map((x) => x.id).slice(0, 40).join(", ");
     throw new ToolError(`No node with id ${id} on the canvas. Existing ids: ${ids || "(none)"}`);
@@ -39,7 +40,7 @@ export function nodeById(id) {
 }
 
 export function groupById(id) {
-  const g = allGroups().find((x) => x.id === Number(id));
+  const g = allGroups().find((x) => String(x.id) === String(id));
   if (!g) {
     const ids = allGroups().map((x) => `${x.id}:"${x.title}"`).join(", ");
     throw new ToolError(`No group with id ${id}. Existing groups: ${ids || "(none)"}`);

@@ -153,11 +153,11 @@ export function connectNodes({ from_node, from_output, to_node, to_input }) {
   src.connect(m.out, dst, m.in);
 
   const link = getLink(dst.inputs?.[m.in]?.link);
-  if (!link || link.origin_id !== src.id || link.origin_slot !== m.out) {
+  if (!link || String(link.origin_id) !== String(src.id) || link.origin_slot !== m.out) {
     throw new ToolError(`The canvas refused or rewired this link (a node pack may veto it).${diag()}`);
   }
   let text = `connected ${src.id}.${s.outputs[m.out].name} -> ${dst.id}.${d.inputs[m.in].name} (${s.outputs[m.out].type})`;
-  if (replaced && !(replaced.node === src.id && replaced.output === m.out)) text += `; replaced previous link from node ${replaced.node}`;
+  if (replaced && !(String(replaced.node) === String(src.id) && replaced.output === m.out)) text += `; replaced previous link from node ${replaced.node}`;
   if (m.kind === "wildcard") text += "; note: matched through a wildcard (*) type";
   return text;
 }
@@ -218,8 +218,8 @@ export function createGroup(args) {
   }
   const Group = window.LiteGraph?.LGraphGroup ?? window.LGraphGroup;
   const group = new Group(String(args.title));
+  graph().add(group); // must be in a graph first: geometry setters dereference group.graph
   applyGroup(group, args);
-  graph().add(group);
   if (group.id === undefined || group.id === null || group.id < 0) {
     group.id = Math.max(0, ...allGroups().filter((g) => g !== group).map((g) => Number(g.id) || 0)) + 1;
   }
