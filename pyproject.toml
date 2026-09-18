@@ -1,0 +1,14 @@
+[project]
+name = "comfyui-sidekick"
+description = "AI agent chat panel for ComfyUI: Claude CLI, Codex CLI or any OpenAI-compatible API edits your workflow live."
+version = "0.1.0"
+license = { file = "LICENSE" }
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/GlowingDog/ComfyUI-Sidekick"
+
+[tool.comfy]
+PublisherId = ""
+DisplayName = "ComfyUI-Sidekick"
+Icon = ""

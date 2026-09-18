@@ -1,0 +1,8 @@
+{"type":"thread.started","thread_id":"01a0b6cc-3eb7-7e03-b7d2-f3281088abab"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest."}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"I’ll check the workflow’s cfg value.\n"}}
+{"type":"item.started","item":{"id":"item_2","type":"mcp_tool_call","server":"sidekick","tool":"get_workflow","arguments":{},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"mcp_tool_call","server":"sidekick","tool":"get_workflow","arguments":{},"result":null,"error":{"message":"MCP tool call requires approval, but approval policy is never"},"status":"failed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"I couldn’t read the cfg value because the get_workflow call was blocked by the approval policy."}}
+{"type":"turn.completed","usage":{"input_tokens":61224,"cached_input_tokens":52736,"cache_write_input_tokens":0,"output_tokens":96,"reasoning_output_tokens":0}}
