@@ -16,7 +16,9 @@ Full approved plan: `C:\Users\PC\.claude\plans\i-would-like-to-compressed-finch.
 - [x] Live verification (2026-09-18, second instance on :8189): routes load, sidebar panel mounts, dev `call_tool` built a 7-node txt2img graph via one `edit_graph`, groups, combo/clamp coercion, connect diagnostics, one undo step per call, MCP 401 without token, real Claude CLI turn (haiku) changed cfg/sampler and added a linked PreviewImage
 - [ ] Known rough edge: `create_group` around nodes that sit inside another group's area overlaps it — needs auto_layout (P3)
 - [ ] Note: node ids are **strings** in frontend 1.48.6 — always compare with `String()`; geometry setters on `LGraphGroup` throw unless the group is already in a graph
-- [ ] Pane tests (`web/dev/pane_tests.js`, `window.SidekickTests`)
+- [x] Fix (2026-09-18, user report "nowhere to paste a key"): `h()` flattened children one level only, so arrays passed through `openOverlay(...kids)` rendered as `[object HTMLDivElement]` text — provider cards and the chat list were unusable. Now `flat(Infinity)`. Verified live on :8188: cards show Base URL / API key / Fetch models / remove; dummy key on a junk entry saved → field cleared, hint shown, focus kept, raw key never returned; then cleared again.
+- [x] Panel keeps `keydown/keyup/keypress/paste/copy/cut` inside the Shadow root (retargeting makes them look like they come from a `<div>`, so ComfyUI/LiteGraph shortcuts could fire while typing or pasting a key). Verified: nothing reaches `document`, node count unchanged.
+- [ ] Pane tests (`web/dev/pane_tests.js`, `window.SidekickTests`) — must cover the settings + chats overlays (that bug shipped because only `node --check` had seen them)
 
 ## P2 — Other brains
 - [x] OpenAI-compatible loop (`agent/loop_openai.py`: aiohttp SSE, tool-call delta accumulation, `reasoning_content`/`reasoning`, `stream_options` fallback on 400, history trimming, 40-step cap), `GET /sidekick/providers/models`, provider settings UI (base URL, write-only key, model datalist, add/remove)

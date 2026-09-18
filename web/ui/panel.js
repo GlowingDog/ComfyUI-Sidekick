@@ -14,7 +14,9 @@ function h(tag, props, ...kids) {
     else if (k in el && k !== "list") el[k] = v;
     else el.setAttribute(k, v);
   }
-  for (const kid of kids.flat()) if (kid !== null && kid !== undefined && kid !== false) el.append(kid);
+  // Infinity: overlays pass arrays of cards inside a rest-args array (two levels deep);
+  // a one-level flat() would append the inner array as "[object HTMLDivElement],…" text.
+  for (const kid of kids.flat(Infinity)) if (kid !== null && kid !== undefined && kid !== false) el.append(kid);
   return el;
 }
 
@@ -127,8 +129,7 @@ export function mountPanel(container) {
   const usage = h("span", { class: "usage" });
   const sendBtn = h("button", { class: "primary", onclick: () => (client.state.running ? client.stop() : submit()) });
   const input = h("textarea", { placeholder: "Ask Sidekick to build or change this workflow…", rows: 2,
-    onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); } e.stopPropagation(); },
-    onkeyup: (e) => e.stopPropagation(), onkeypress: (e) => e.stopPropagation(),
+    onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); } },
     oninput: () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight + 2, 200) + "px"; } });
 
   function submit() {
@@ -233,7 +234,17 @@ export function mountPanel(container) {
     // API providers: keys are write-only (the server only ever returns a hint)
     const saveProviders = (list) => client.saveConfig({ providers: list }).then(showSettings);
     const providerCards = (c.providers ?? []).filter((p) => p.kind === "openai").map((p) => {
-      const patch = (field, value) => saveProviders(c.providers.map((x) => (x.id === p.id ? { ...x, [field]: value } : x)));
+      // Field edits save without re-rendering the overlay (a re-render would steal focus from the
+      // next field mid-typing) and always start from the freshest config, never the captured `c`.
+      const patch = (field, value) => client.saveConfig({ providers: client.state.config.providers.map((x) => (x.id === p.id ? { ...x, [field]: value } : x)) });
+      const savedHint = (prov) => `saved (${prov?.api_key_hint || "••••"}) — type to replace`;
+      const keyIn = h("input", { type: "password", autocomplete: "off", placeholder: p.api_key_set ? savedHint(p) : "paste API key, then press Enter",
+        onchange: async () => {
+          if (!keyIn.value) return;
+          await patch("api_key", keyIn.value);
+          keyIn.value = "";
+          keyIn.placeholder = savedHint(client.state.config.providers.find((x) => x.id === p.id));
+        } });
       const listId = `models-${p.id}`;
       const models = h("datalist", { id: listId });
       const modelIn = h("input", { value: p.model ?? "", placeholder: "model id", onchange: (e) => patch("model", e.target.value.trim()) });
@@ -252,8 +263,7 @@ export function mountPanel(container) {
           h("input", { value: p.name ?? "", style: "flex:1;font-weight:600", onchange: (e) => patch("name", e.target.value.trim() || p.id) }),
           h("button", { class: "ghost", title: "Remove provider", textContent: "🗑", onclick: () => saveProviders(c.providers.filter((x) => x.id !== p.id)) })),
         h("label", {}, "Base URL", h("input", { value: p.base_url ?? "", placeholder: "https://…/v1", onchange: (e) => patch("base_url", e.target.value.trim()) })),
-        h("label", {}, "API key", h("input", { type: "password", autocomplete: "off", placeholder: p.api_key_set ? `saved (${p.api_key_hint || "••••"}) — type to replace` : "not set",
-          onchange: (e) => { if (e.target.value) patch("api_key", e.target.value); } })),
+        h("label", {}, "API key", keyIn),
         h("label", {}, "Default model", h("div", { style: "display:flex;gap:6px" }, modelIn, fetchBtn), models));
     });
     const addProvider = h("button", { textContent: "＋ Add OpenAI-compatible provider", onclick: () => {
@@ -269,13 +279,18 @@ export function mountPanel(container) {
       h("div", { class: "hint", textContent: `Sidekick ${st.version ?? ""} · ${st.tools ?? "?"} tools` }));
   }
 
-  root.append(h("style", { textContent: CSS }), h("div", { class: "sk" },
+  const sk = h("div", { class: "sk" },
     h("div", { class: "head" }, title,
       h("button", { class: "ghost", title: "New chat", textContent: "＋", onclick: () => { closeOverlay(); client.newChat(); input.focus(); } }),
       h("button", { class: "ghost", title: "Chats", textContent: "☰", onclick: () => (overlay?.kind === "sessions" ? closeOverlay() : client.refreshSessions().then(showSessions)) }),
       h("button", { class: "ghost", title: "Settings", textContent: "⚙", onclick: () => (overlay?.kind === "settings" ? closeOverlay() : showSettings()) })),
     body,
-    h("div", { class: "composer" }, input, h("div", { class: "row" }, providerSel, modelInput, sendBtn), usage)));
+    h("div", { class: "composer" }, input, h("div", { class: "row" }, providerSel, modelInput, sendBtn), usage));
+  // Shadow DOM retargets events: outside the panel, a key press or paste in one of our inputs
+  // looks like it came from a plain <div>, so ComfyUI/LiteGraph shortcuts (Delete, Ctrl+V paste
+  // nodes, …) could fire while the user types or pastes an API key. Keep those events inside.
+  for (const type of ["keydown", "keyup", "keypress", "paste", "copy", "cut"]) sk.addEventListener(type, (e) => e.stopPropagation());
+  root.append(h("style", { textContent: CSS }), sk);
 
   container.replaceChildren(host);
   const unsubscribe = client.subscribe(onChange);
