@@ -7,7 +7,7 @@ from aiohttp import web
 from server import PromptServer
 
 from . import VERSION, bridge, config, mcp_server, pending, registry, sessions, tooldefs
-from .agent import cli_common, runner
+from .agent import cli_common, loop_openai, runner
 
 log = logging.getLogger("sidekick")
 routes = PromptServer.instance.routes
@@ -67,6 +67,17 @@ async def post_config(request):
     cfg = config.merge_update(config.load(), data)
     config.save(cfg)
     return web.json_response(config.masked(cfg))
+
+
+@routes.get("/sidekick/providers/models")
+async def provider_models(request):
+    provider = config.get_provider(config.load(), request.query.get("provider"))
+    if provider is None or provider.get("kind") != "openai":
+        return _bad("unknown API provider", 404)
+    try:
+        return web.json_response({"models": await loop_openai.list_models(provider)})
+    except Exception as e:
+        return _bad(str(e), 502)
 
 
 # ---------- chat ----------

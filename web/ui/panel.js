@@ -230,8 +230,40 @@ export function mountPanel(container) {
     const def = h("select", { onchange: () => client.saveConfig({ default_provider: def.value }) },
       (c.providers ?? []).map((p) => h("option", { value: p.id, textContent: p.name, selected: p.id === c.default_provider })));
     const dev = h("input", { type: "checkbox", checked: !!c.dev_mode, onchange: () => client.saveConfig({ dev_mode: dev.checked }) });
+    // API providers: keys are write-only (the server only ever returns a hint)
+    const saveProviders = (list) => client.saveConfig({ providers: list }).then(showSettings);
+    const providerCards = (c.providers ?? []).filter((p) => p.kind === "openai").map((p) => {
+      const patch = (field, value) => saveProviders(c.providers.map((x) => (x.id === p.id ? { ...x, [field]: value } : x)));
+      const listId = `models-${p.id}`;
+      const models = h("datalist", { id: listId });
+      const modelIn = h("input", { value: p.model ?? "", placeholder: "model id", onchange: (e) => patch("model", e.target.value.trim()) });
+      modelIn.setAttribute("list", listId);
+      const fetchBtn = h("button", { textContent: "Fetch models", onclick: async () => {
+        fetchBtn.disabled = true; fetchBtn.textContent = "…";
+        try {
+          const r = await client.getJSON(`/sidekick/providers/models?provider=${encodeURIComponent(p.id)}`);
+          models.replaceChildren(...r.models.map((m) => h("option", { value: m })));
+          fetchBtn.textContent = `${r.models.length} models`;
+        } catch (e) { fetchBtn.textContent = "Failed"; fetchBtn.title = e.message; }
+        fetchBtn.disabled = false;
+      } });
+      return h("div", { class: "card", style: "padding:8px;display:flex;flex-direction:column;gap:6px" },
+        h("div", { style: "display:flex;gap:6px;align-items:center" },
+          h("input", { value: p.name ?? "", style: "flex:1;font-weight:600", onchange: (e) => patch("name", e.target.value.trim() || p.id) }),
+          h("button", { class: "ghost", title: "Remove provider", textContent: "🗑", onclick: () => saveProviders(c.providers.filter((x) => x.id !== p.id)) })),
+        h("label", {}, "Base URL", h("input", { value: p.base_url ?? "", placeholder: "https://…/v1", onchange: (e) => patch("base_url", e.target.value.trim()) })),
+        h("label", {}, "API key", h("input", { type: "password", autocomplete: "off", placeholder: p.api_key_set ? `saved (${p.api_key_hint || "••••"}) — type to replace` : "not set",
+          onchange: (e) => { if (e.target.value) patch("api_key", e.target.value); } })),
+        h("label", {}, "Default model", h("div", { style: "display:flex;gap:6px" }, modelIn, fetchBtn), models));
+    });
+    const addProvider = h("button", { textContent: "＋ Add OpenAI-compatible provider", onclick: () => {
+      const id = "custom" + Date.now().toString(36);
+      saveProviders([...(c.providers ?? []), { id, kind: "openai", name: "Custom", base_url: "", model: "" }]);
+    } });
+
     openOverlay("settings",
       h("h4", { textContent: "Behaviour" }), h("label", {}, "Permissions", mode), h("label", {}, "Default brain", def),
+      h("h4", { textContent: "API providers" }), providerCards, addProvider,
       h("h4", { textContent: "CLIs" }), h("div", { class: "hint", textContent: `Claude CLI: ${cli("claude")}` }), h("div", { class: "hint", textContent: `Codex CLI: ${cli("codex")}` }),
       h("h4", { textContent: "Developer" }), h("label", { class: "check" }, dev, "Dev mode (enables /sidekick/dev/call_tool on localhost)"),
       h("div", { class: "hint", textContent: `Sidekick ${st.version ?? ""} · ${st.tools ?? "?"} tools` }));

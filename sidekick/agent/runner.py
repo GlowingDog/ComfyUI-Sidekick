@@ -3,15 +3,17 @@ import asyncio
 import logging
 
 from .. import config, pending
-from . import cli_claude
+from . import cli_claude, loop_openai
 
 log = logging.getLogger("sidekick")
 
 
-async def _run_provider(session, client_id, text, provider, model):
+async def _run_provider(session, client_id, text, provider, model, cfg):
     kind = provider.get("kind")
     if kind == "claude_cli":
         return await cli_claude.run(session, client_id, text, provider, model)
+    if kind == "openai":
+        return await loop_openai.run(session, client_id, text, provider, model, cfg)
     raise RuntimeError(f"Provider kind '{kind}' is not available yet.")
 
 
@@ -29,7 +31,7 @@ async def run_turn(session, client_id, text, provider_id, model):
             raise RuntimeError("No provider configured. Open Sidekick settings.")
         session.provider_kind = provider.get("kind")
         usage = await _run_provider(session, client_id, text, provider,
-                                    model or provider.get("model") or None)
+                                    model or provider.get("model") or None, cfg)
     except asyncio.CancelledError:
         session.add_item("notice", text="Stopped.")
     except Exception as e:
