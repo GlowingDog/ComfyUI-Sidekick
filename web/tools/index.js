@@ -1,5 +1,5 @@
 // Browser-side tool table. Names and argument shapes mirror sidekick/tooldefs/*.py.
-import { withUndo } from "./graphCtx.js";
+import { app, withUndo } from "./graphCtx.js";
 import { getNode, getWorkflow, traceConnections } from "./read.js";
 import { addNode, arrangeNodes, connectNodes, createGroup, disconnect, editGraph, removeGroup, removeNodes, setWidgetValues, updateGroup, updateNode } from "./edit.js";
 import { autoLayout } from "./autoLayout.js";
@@ -8,7 +8,7 @@ import { contextMenu } from "./menus.js";
 import { queuePrompt, waitForExecution } from "./run.js";
 import { settings } from "./settings.js";
 import { subgraph } from "./subgraph.js";
-import { loadWorkflow, workflowTabs } from "./workflow.js";
+import { loadWorkflow, missingNodeTypes, workflowTabs } from "./workflow.js";
 import { screenshot } from "./vision.js";
 
 // edit: true -> wrapped in ONE undo step of the active workflow.
@@ -43,6 +43,9 @@ const TOOLS = {
   queue_prompt: { fn: queuePrompt },
   wait_for_execution: { fn: waitForExecution },
   screenshot: { fn: screenshot },
+  // Leading underscore: helpers for Python-side tools, never offered to the model.
+  _missing_node_types: { fn: missingNodeTypes },
+  _refresh_node_defs: { fn: () => app.extensionManager.command.execute("Comfy.RefreshNodeDefinitions") },
 };
 
 export async function runTool(name, args) {

@@ -10,6 +10,7 @@ from server import PromptServer
 
 from . import VERSION, bridge, config, mcp_server, pending, registry, sessions, tooldefs
 from .agent import cli_common, loop_openai, runner
+from .backend import downloads, restart
 
 log = logging.getLogger("sidekick")
 routes = PromptServer.instance.routes
@@ -123,6 +124,26 @@ async def chat(request):
     return web.json_response({"session_id": session.id}, status=202)
 
 
+@routes.post("/sidekick/chat/resume")
+async def chat_resume(request):
+    """The browser calls this when ComfyUI is back after restart_comfyui: the note the model
+    left becomes its next turn. The first caller wins; nothing to resume is not an error."""
+    data = await _json(request) or {}
+    session = sessions.get(data.get("session_id"))
+    if session is None or not data.get("client_id") or session.running:
+        return web.json_response({"resumed": False})
+    note = restart.take_continuation(session)
+    if note is None:
+        return web.json_response({"resumed": False})
+    provider = config.get_provider(config.load(), note.get("provider") or config.load().get("default_provider"))
+    if provider and provider.get("kind", "").endswith("_cli") and not _is_loopback(request):
+        return _bad("CLI providers can only be used from the machine running ComfyUI.", 403)
+    runner.start_turn(session, data["client_id"], restart.RESUME_TEXT.format(note=note["note"]),
+                      note.get("provider"), note.get("model"),
+                      shown=f"↻ ComfyUI restarted. Continuing: {note['note']}")
+    return web.json_response({"resumed": True}, status=202)
+
+
 @routes.post("/sidekick/chat/stop")
 async def chat_stop(request):
     data = await _json(request) or {}
@@ -145,6 +166,17 @@ async def rpc_result(request):
     ok = bridge.resolve(str(data.get("rid")), bool(data.get("ok")), data.get("result"),
                         data.get("error"))
     return web.json_response({"ok": ok})
+
+
+# ---------- downloads (the chat's progress card has a cancel button) ----------
+
+@routes.post("/sidekick/downloads/cancel")
+async def download_cancel(request):
+    data = await _json(request) or {}
+    try:
+        return web.json_response({"ok": True, "text": downloads.cancel(data.get("id"))})
+    except registry.ToolError as e:
+        return _bad(str(e), 404)
 
 
 # ---------- sessions ----------

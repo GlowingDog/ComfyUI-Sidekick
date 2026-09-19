@@ -26,6 +26,7 @@ const ls = {
 
 export const state = {
   sessionId: null, title: "New chat", items: [], seq: 0, running: false, usage: null,
+  continuation: null, // note left by restart_comfyui, consumed by resumeAfterRestart()
   sessions: [], config: null, status: null,
   gesture: null, // pending requestGesture(), drawn by the panel
   mounted: 0, // how many panels are on screen
@@ -44,9 +45,29 @@ function newId() {
 function applySnapshot(snap) {
   state.sessionId = snap.id; state.title = snap.title; state.items = snap.items ?? [];
   state.seq = snap.seq ?? 0; state.running = !!snap.running;
+  state.continuation = snap.continuation ?? null;
   ls.set(LS.session, snap.id);
   notify({ type: "full" });
 }
+
+/**
+ * restart_comfyui leaves a note in the chat it was called from. Once ComfyUI is back (socket
+ * reconnected, or the page was reloaded meanwhile) that note becomes the model's next turn.
+ * The server hands the note out once, so several tabs cannot resume twice.
+ */
+async function resumeAfterRestart() {
+  if (!state.continuation || state.running || !state.sessionId) return;
+  state.continuation = null;
+  try { await app.extensionManager?.command?.execute?.("Comfy.RefreshNodeDefinitions"); } catch { /* new node types just stay unknown until a reload */ }
+  try {
+    const r = await postJSON("/sidekick/chat/resume", { session_id: state.sessionId, client_id: api.clientId });
+    if (r?.resumed) { state.running = true; notify({ type: "meta" }); }
+  } catch (e) {
+    console.warn("[Sidekick] could not resume after the restart", e);
+  }
+}
+
+export const cancelDownload = (id) => postJSON("/sidekick/downloads/cancel", { id });
 
 export async function loadSession(id) {
   try {
@@ -171,8 +192,11 @@ export async function startClient() {
   if (started) return;
   started = true;
   api.addEventListener("sidekick.event", onEvent);
-  api.addEventListener("reconnected", () => { refreshStatus(); if (state.sessionId && state.items.length) loadSession(state.sessionId); });
+  api.addEventListener("reconnected", async () => {
+    refreshStatus();
+    if (state.sessionId && state.items.length) { await loadSession(state.sessionId); await resumeAfterRestart(); }
+  });
   await loadConfig().catch((e) => console.error("[Sidekick] config load failed", e));
   const last = ls.get(LS.session);
-  if (last) await loadSession(last); else newChat();
+  if (last) { await loadSession(last); await resumeAfterRestart(); } else newChat();
 }

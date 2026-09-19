@@ -32,6 +32,9 @@ class ToolDefTests(unittest.TestCase):
             js = f.read()
         table = js[js.index("const TOOLS = {"):js.index("};", js.index("const TOOLS = {"))]
         js_names = set(re.findall(r"^\s*([a-z_]+): \{ fn:", table, re.M))
+        internal = {n for n in js_names if n.startswith("_")}  # helpers for Python-side tools, not for the model
+        self.assertEqual(internal, {"_missing_node_types", "_refresh_node_defs"})
+        js_names -= internal
         py_frontend = {t.name for t in registry.all_tools() if t.side == "frontend"}
         self.assertEqual(py_frontend - js_names, set(), "declared to the LLM but not implemented in web/tools/index.js")
         self.assertEqual(js_names - py_frontend, set(), "implemented in the browser but never offered to the LLM")

@@ -13,6 +13,7 @@ DEFAULTS = {
     "permission_mode": "confirm",  # confirm | auto | readonly
     "dev_mode": False,
     "allow_execute_js": False,
+    "web_tools": True,  # web_search / web_fetch for API brains
     "default_provider": "claude_cli",
     "providers": [
         {"id": "claude_cli", "kind": "claude_cli", "name": "Claude CLI", "model": ""},

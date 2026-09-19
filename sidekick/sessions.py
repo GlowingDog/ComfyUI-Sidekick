@@ -1,6 +1,7 @@
 """Chat sessions. The server owns the chat state as a list of UI *items*; every
 mutation is mirrored to browsers as a sequenced `sidekick.event`. A browser that
 (re)mounts fetches the snapshot and applies only events with a higher seq."""
+import copy
 import json
 import os
 import re
@@ -65,6 +66,8 @@ class Session:
         self.task = None
         self.allowed_tools = set()  # "allow for session" grants
         self.provider_kind = None
+        self.provider_id = self.model = None  # what this turn runs on (restart_comfyui resumes with it)
+        self.restart_requested = False
 
     # ---- state ----
     @property
@@ -91,7 +94,10 @@ class Session:
         item = {"id": _new_id(), "kind": kind, "ts": time.time()}
         item.update(fields)
         self.items.append(item)
-        self.emit("item_add", item=item)
+        # A COPY: ComfyUI serializes websocket messages later, from its publish loop. With the live
+        # dict, a text delta appended in the same tick was already inside the "item_add" the browser
+        # received, and then arrived again as a delta: every streamed reply began "II …", "SureSure …".
+        self.emit("item_add", item=copy.deepcopy(item))
         return item
 
     def update_item(self, item, **patch):
@@ -153,6 +159,10 @@ def get(sid, create=False):
     s = Session(sid=sid if sid and re.fullmatch(r"[0-9a-f]{6,32}", sid) else None)
     _sessions[s.id] = s
     return s
+
+
+def running():
+    return [s for s in _sessions.values() if s.running]
 
 
 def list_meta():

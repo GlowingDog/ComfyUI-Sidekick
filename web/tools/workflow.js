@@ -80,11 +80,19 @@ async function listTemplates(query) {
   return [`templates (${rows.length}${toks.length ? "" : "; pass query to narrow"}): name | title | category | about`, ...lines, rows.length > 40 ? `…${rows.length - 40} more; refine the query.` : ""].filter(Boolean).join("\n");
 }
 
-/** Node types the open graph uses but this ComfyUI does not have (red nodes). */
-function missingTypes() {
+/** Node types the open workflow uses but this ComfyUI does not have (red nodes), subgraphs included. */
+export function missingNodeTypes() {
   const known = window.LiteGraph?.registered_node_types ?? {};
-  return [...new Set(allNodes().filter((n) => !n.isSubgraphNode?.() && !(n.type in known)).map((n) => n.type))];
+  const found = new Set();
+  const walk = (g, depth) => {
+    for (const n of g?._nodes ?? []) {
+      if (n.isSubgraphNode?.()) { if (depth < 8) walk(n.subgraph, depth + 1); } else if (n.type && !(n.type in known)) found.add(n.type);
+    }
+  };
+  walk(app.rootGraph ?? app.graph, 0);
+  return [...found];
 }
+const missingTypes = missingNodeTypes;
 
 function loadedReport(what) {
   const missing = missingTypes();

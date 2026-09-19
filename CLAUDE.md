@@ -29,9 +29,19 @@ Browser (web/)                                    Python (sidekick/, inside the 
 - **`registry.dispatch()` is the single choke point** for every brain: validation, permissions, the tool card in the chat, truncation of results (16k chars).
 - **MCP endpoint** (`mcp_server.py` + `POST /sidekick/mcp`): hand-written JSON-RPC (initialize, ping, tools/list, tools/call), JSON responses only, loopback only. A per-turn bearer token binds CLI calls to a chat session + browser tab (`client_id` = ComfyUI websocket `clientId`).
 - **Sessions** (`sessions.py`): the server owns chat state as a list of UI *items* (`user`, `assistant`, `tool`, `question`, `permission`, `error`, `notice`). Every mutation is a sequenced `sidekick.event` (`item_add`, `item_update`, `text_delta`, `turn_start`, `turn_end`). Browsers fetch a snapshot, then apply events with a higher `seq`; a gap triggers a re-fetch.
+- **Never put a live, mutable object into an event payload.** `PromptServer.send_sync` only queues; serialization happens later in ComfyUI's publish loop, so later mutations leak into earlier events (this doubled the first streamed chunk of every reply until 2026-09-19). `add_item` emits a deep copy; `update_item` patches must be fresh values.
+- When checking a chat end to end, compare the **browser store** (`client.state.items`) with the server snapshot — the server copy alone hid that bug for two phases.
 - **Blocking interactions** (`pending.py`): `ask_user` questions and permission prompts add an item and await a future resolved by `POST /sidekick/answer`.
 - **Data dir**: `folder_paths.get_system_user_directory("sidekick")` → `ComfyUI/user/__sidekick/` (`config.json`, `sessions/`, `cli_workspace/`, `tmp/`). The `__` prefix keeps it out of the `/userdata` HTTP API. API keys are never returned unmasked (`config.masked`).
 - **Python package layout**: everything is under the inner package `sidekick/` with **relative imports only**, so it imports as `ComfyUI-Sidekick.sidekick` inside ComfyUI and as `sidekick` in unit tests. Only `routes.py` imports ComfyUI's `server`.
+
+## Backend tools that touch the outside world (P4)
+- **Every request the model can cause goes through `backend/netguard.py`** (`fetch` / `open_url`): public http(s) only, checked at connect time by a resolver (DNS rebinding safe), redirects followed by hand and re-checked, credentials pinned to their host via `auth={host_suffix: headers}`. Never call `aiohttp` directly for model-supplied URLs. `backend/loopback.py` is the opposite: only this server (core + Manager routes). The one unguarded outbound call is the user's own SearXNG address.
+- Tests reach their local mock servers by patching `netguard.is_public_ip` (there is deliberately no "guard off" switch in production code paths except `guard=False` for the SearXNG call).
+- **ComfyUI-Manager** (V3.40, `custom_nodes/comfyui-manager/glob/manager_server.py`): body-less POSTs (`/manager/queue/reset|start`, `/manager/reboot`) reject form content types → always send JSON (`loopback.request` does). `/manager/queue/install` indexes `version`, `channel`, `mode` → send the whole list entry. Verdicts are websocket-only (`cm-queue-status`) → verify through `/customnode/installed`. At `security_level=normal`: installs from the default list OK, git-URL / pip installs refused (404/403), non-safetensors models only from its model list.
+- **Downloads** write only under `folder_paths` model folders; pickle-capable formats only from the Manager's vetted list (`downloads.check_ext`). Do not loosen either without asking the user.
+- **Restart** is booked by the tool and performed by `runner.run_turn`'s `finally` (turn saved first). `session.continuation` = `{note, provider, model, ts}`; `POST /sidekick/chat/resume` consumes it once.
+- Internal browser RPCs start with `_` in `web/tools/index.js` (`_missing_node_types`, `_refresh_node_defs`): callable from Python through `bridge.call`, never offered to the model (the parity test pins the list).
 
 ## Verified CLI facts (2026-09-18; claude 2.1.274, codex-cli 0.154.0)
 - `claude` npm shim → native `…/npm/node_modules/@anthropic-ai/claude-code/bin/claude.exe`; `codex` shim → `node …/@openai/codex/bin/codex.js`. `cli_common.resolve()` handles both.
@@ -64,7 +74,7 @@ Browser (web/)                                    Python (sidekick/, inside the 
 - Live-test browser tools without restarting the server: in the Browser pane, `const { runTool } = await import('/extensions/ComfyUI-Sidekick/tools/index.js')` (same module instance ComfyUI loaded). Python tool-def changes still need a ComfyUI restart before an LLM can see them.
 
 ## Tests
-- Python (run each file; `tests/py` is not an importable package name): `..\..\..\python_embeded\python.exe tests\py\test_core.py`, `…\test_openai_loop.py`, `…\test_codex.py`, `…\test_tooldefs.py`, `…\test_routes.py`, `…\test_vision.py`
+- Python (run each file; `tests/py` is not an importable package name): `..\..\..\python_embeded\python.exe tests\py\test_core.py`, `…\test_openai_loop.py`, `…\test_codex.py`, `…\test_tooldefs.py`, `…\test_routes.py`, `…\test_vision.py`, `…\test_web.py`, `…\test_manager.py` (mock Manager), `…\test_downloads.py` (stubs `folder_paths`)
 - Anything with arithmetic or text formatting goes in a **pure module** (no ComfyUI imports) so node can test it: `layoutMath.js`, `dagLayout.js`, `menuMatch.js`, `runReport.js`, `connectMatch.js`, `widgetCoerce.js`.
 - **Never patch source files with ad-hoc Python/sed scripts** — use the Edit tool (scripted rewrites make the harness re-echo whole files into context).
 - JS (pure modules): `node --test tests/js/pure.test.mjs`

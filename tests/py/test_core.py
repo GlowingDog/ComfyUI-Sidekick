@@ -65,6 +65,41 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(node_catalog.combo_options(INFO, "FancyUpscale", "mode")["total_matching"], 2)
 
 
+class EventTests(unittest.TestCase):
+    def test_events_are_snapshots_not_live_references(self):
+        """ComfyUI serializes websocket messages later, from its publish loop. An "item_add" that
+        still pointed at the live item already contained the first streamed chunk, which then
+        arrived again as a delta: replies began "II can't…" (user report, 2026-09-18)."""
+        sent = []
+        sessions.set_emit_hook(sent.append)  # keeps the payload objects, like ComfyUI's message queue
+        try:
+            s = sessions.Session()
+            item = s.add_item("assistant", text="", questions=[{"q": 1}])
+            s.append_text(item, "I")  # same tick, before anything was serialized
+            s.append_text(item, " can't")
+            item["questions"].append({"q": 2})
+            replay = ""
+            for ev in sent:  # what the browser does with what it receives
+                if ev["type"] == "item_add":
+                    replay = ev["item"]["text"]
+                    self.assertEqual(ev["item"]["questions"], [{"q": 1}])
+                elif ev["type"] == "text_delta":
+                    replay += ev["delta"]
+            self.assertEqual(replay, "I can't")
+            self.assertEqual([ev["seq"] for ev in sent], [1, 2, 3])
+        finally:
+            sessions.set_emit_hook(lambda payload: None)
+
+    def test_config_merges_nested_secrets(self):
+        cfg = config.merge_update(config.load(), {"tokens": {"huggingface": "hf_abcdefgh1234"}, "search": {"backend": "brave", "brave_key": "BSA-99998888"}, "web_tools": False})
+        self.assertEqual((cfg["tokens"]["huggingface"], cfg["search"]["backend"], cfg["web_tools"]), ("hf_abcdefgh1234", "brave", False))
+        m = config.masked(cfg)
+        self.assertEqual((m["tokens"]["huggingface"], m["tokens"]["huggingface_hint"], m["search"]["brave_key"], m["search"]["brave_key_set"]), ("", "…1234", "", True))
+        kept = config.merge_update(cfg, {"tokens": m["tokens"], "search": {"searxng_url": "http://localhost:8080"}})
+        self.assertEqual((kept["tokens"]["huggingface"], kept["search"]["brave_key"], kept["search"]["searxng_url"]), ("hf_abcdefgh1234", "BSA-99998888", "http://localhost:8080"))
+        self.assertEqual(config.merge_update(kept, {"tokens": {"huggingface_clear": True}})["tokens"]["huggingface"], "")
+
+
 class ConfigTests(unittest.TestCase):
     def test_secrets_masked_and_preserved(self):
         cfg = config.load()

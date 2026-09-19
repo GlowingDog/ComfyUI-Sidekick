@@ -104,9 +104,25 @@ function renderPermission(item) {
       h("button", { textContent: "Deny", onclick: decide("deny") })));
 }
 
+const fmtBytes = (n) => { let v = Number(n) || 0; for (const u of ["B", "KB", "MB", "GB"]) { if (v < 1024 || u === "GB") return `${v.toFixed(u === "B" || u === "KB" ? 0 : 1)} ${u}`; v /= 1024; } return ""; };
+
+function renderDownload(item) {
+  const live = item.status === "running" || item.status === "starting";
+  const pct = item.total ? Math.min(100, (100 * item.done) / item.total) : 0;
+  const state = { running: `${item.total ? pct.toFixed(0) + "% · " : ""}${fmtBytes(item.done)}${item.total ? " of " + fmtBytes(item.total) : ""}${item.speed ? " · " + fmtBytes(item.speed) + "/s" : ""}`,
+    done: `done · ${fmtBytes(item.done)}`, error: `failed: ${item.error ?? "?"}`, cancelled: "cancelled", interrupted: "interrupted (ComfyUI restarted)" }[item.status] ?? item.status;
+  return h("div", { class: `card dl ${item.status}` },
+    h("div", { class: "row", style: "display:flex;gap:6px;align-items:center" },
+      h("span", { class: "name", style: "flex:1;overflow-wrap:anywhere", textContent: `⬇ ${item.folder ?? ""}/${item.name ?? ""}` }),
+      live ? h("button", { class: "ghost", title: "Cancel download", textContent: "✕", onclick: (e) => { e.target.disabled = true; client.cancelDownload(item.download_id).catch(() => { e.target.disabled = false; }); } }) : null),
+    live || item.status === "done" ? h("div", { class: "bar" }, h("div", { style: `width:${item.status === "done" ? 100 : pct}%` })) : null,
+    h("div", { class: "hint", textContent: state }));
+}
+
 function renderItem(item) {
   switch (item.kind) {
-    case "user": return h("div", { class: "user", textContent: item.text });
+    case "user": return h("div", { class: item.auto ? "notice" : "user", textContent: item.text });
+    case "download": return renderDownload(item);
     case "assistant": return renderAssistant(item);
     case "tool": return renderTool(item);
     case "question": return renderQuestion(item);
@@ -301,8 +317,32 @@ export function mountPanel(container) {
       saveProviders([...(c.providers ?? []), { id, kind: "openai", name: "Custom", base_url: "", model: "" }]);
     } });
 
+    // Web and downloads. Secrets are write-only, like provider keys: the server returns a hint only.
+    const secret = (section, key, label, note) => {
+      const cur = () => client.state.config?.[section] ?? {};
+      const hint = () => (cur()[`${key}_set`] ? `saved (${cur()[`${key}_hint`] || "••••"}) — type to replace` : "paste, then press Enter");
+      const box = h("input", { type: "password", autocomplete: "off", placeholder: hint(), onchange: async () => {
+        if (!box.value) return;
+        await client.saveConfig({ [section]: { [key]: box.value } });
+        box.value = ""; box.placeholder = hint();
+      } });
+      const clear = h("button", { class: "ghost", title: "Forget this key", textContent: "🗑", onclick: async () => { await client.saveConfig({ [section]: { [`${key}_clear`]: true } }); box.placeholder = hint(); } });
+      return h("label", {}, label, h("div", { style: "display:flex;gap:6px" }, box, clear), note ? h("span", { class: "hint", textContent: note }) : null);
+    };
+    const web = h("input", { type: "checkbox", checked: c.web_tools !== false, onchange: () => client.saveConfig({ web_tools: web.checked }) });
+    const backend = h("select", { onchange: () => client.saveConfig({ search: { backend: backend.value } }) },
+      [["ddg", "DuckDuckGo (no key needed)"], ["tavily", "Tavily"], ["brave", "Brave Search"], ["searxng", "SearXNG (your own instance)"]]
+        .map(([v, t]) => h("option", { value: v, textContent: t, selected: (c.search?.backend ?? "ddg") === v })));
+    const searx = h("input", { value: c.search?.searxng_url ?? "", placeholder: "http://localhost:8080", onchange: () => client.saveConfig({ search: { searxng_url: searx.value.trim() } }) });
+
     openOverlay("settings",
       h("h4", { textContent: "Behaviour" }), h("label", {}, "Permissions", mode), h("label", {}, "Default brain", def),
+      h("h4", { textContent: "Web and downloads" }),
+      h("label", { class: "check" }, web, "Let API brains search and read the web (Claude and Codex CLI use their own web tools)"),
+      h("label", {}, "Search engine", backend), secret("search", "tavily_key", "Tavily API key"), secret("search", "brave_key", "Brave Search API key"),
+      h("label", {}, "SearXNG address", searx),
+      secret("tokens", "huggingface", "Hugging Face token", "For gated or private models. Only ever sent to huggingface.co."),
+      secret("tokens", "civitai", "Civitai API key", "Most Civitai downloads need it. Only ever sent to civitai.com."),
       h("h4", { textContent: "API providers" }), providerCards, addProvider,
       h("h4", { textContent: "CLIs" }), h("div", { class: "hint", textContent: `Claude CLI: ${cli("claude")}` }), h("div", { class: "hint", textContent: `Codex CLI: ${cli("codex")}` }),
       h("h4", { textContent: "Developer" }), h("label", { class: "check" }, dev, "Dev mode (enables /sidekick/dev/call_tool on localhost)"),

@@ -68,6 +68,13 @@ pre code { background: none; padding: 0; }
 .ask.done { border-color: var(--line); color: var(--dim); }
 .ask pre { margin: 0; max-height: 160px; }
 
+.dl { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.dl .name { font: 12px ui-monospace, Consolas, monospace; }
+.dl .hint { color: var(--dim); font-size: 12px; overflow-wrap: anywhere; }
+.dl .bar { height: 6px; border-radius: 3px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; }
+.dl .bar > div { height: 100%; background: var(--accent); transition: width .4s linear; }
+.dl.done .bar > div { background: var(--ok); } .dl.error { border-color: var(--err); } .dl.error .hint { color: var(--err); }
+
 .error { color: var(--err); border: 1px solid var(--err); border-radius: 8px; padding: 6px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .notice { color: var(--dim); text-align: center; font-size: 12px; }
 

@@ -70,6 +70,8 @@ def all_tools(provider_kind=None, cfg=None):
             continue
         if t.name == "execute_js" and not (cfg or {}).get("allow_execute_js"):
             continue
+        if t.name in ("web_search", "web_fetch") and (cfg or {}).get("web_tools") is False:
+            continue  # the user switched internet access off
         out.append(t)
     return out
 
@@ -169,6 +171,9 @@ async def dispatch_full(ctx, name, args):
     missing = [k for k in tool.required if k not in args]
     if missing:
         return False, f"Missing required argument(s): {', '.join(missing)}", []
+    if getattr(ctx.session, "restart_requested", False):
+        return False, ("ComfyUI is about to restart (you booked it with restart_comfyui). Call no more tools: end "
+                       "your turn now with one short sentence. You will be called again after the restart."), []
 
     item = None if tool.silent else ctx.session.add_item("tool", name=name, args=args, status="running")
 
