@@ -1,5 +1,5 @@
 // Read tools: budgeted text outline of the canvas, node detail, link tracing.
-import { app, ToolError, graph, allNodes, allGroups, getLink, nodeById, nodeRect, round } from "./graphCtx.js";
+import { app, ToolError, graph, allNodes, allGroups, getLink, nodeById, nodeRect, round, subgraphTrail } from "./graphCtx.js";
 
 const MODES = { 0: "active", 2: "muted", 4: "bypassed" };
 const MAX_WIDGET_CHARS = 140;
@@ -70,6 +70,8 @@ export function findGroup(ref) {
 }
 
 const titleOf = (n) => (n.title && n.title !== n.constructor?.title && n.title !== n.type ? JSON.stringify(n.title) : "");
+// A subgraph node's real type is a UUID: say what it is instead (the "subgraph" tool looks inside).
+const typeOf = (n) => (n.isSubgraphNode?.() ? `subgraph ${JSON.stringify(n.subgraph?.name ?? n.title ?? "")} [${n.subgraph?._nodes?.length ?? "?"} nodes inside]` : n.type);
 
 function flagsOf(n) {
   const flags = [];
@@ -89,7 +91,7 @@ function linkText(n) {
 function renderFull(nodes, includeWidgets) {
   const lines = ["nodes (id|type|title|x,y|WxH|flags):"];
   for (const n of nodes) {
-    lines.push(` ${n.id}|${n.type}|${titleOf(n)}|${round(n.pos[0])},${round(n.pos[1])}|${round(n.size[0])}x${round(n.size[1])}|${flagsOf(n)}`);
+    lines.push(` ${n.id}|${typeOf(n)}|${titleOf(n)}|${round(n.pos[0])},${round(n.pos[1])}|${round(n.size[0])}x${round(n.size[1])}|${flagsOf(n)}`);
     if (includeWidgets) {
       const ws = visibleWidgets(n).map((w) => `${w.name}=${fmtValue(w.value)}`);
       if (ws.length) lines.push(`   widgets: ${ws.join(", ")}`);
@@ -107,7 +109,7 @@ function renderOutline(nodes) {
   const lines = ["nodes (id|type|title|flags | in: linked inputs | out: linked outputs):"];
   for (const n of nodes) {
     const { ins, outs } = linkText(n);
-    lines.push(` ${n.id}|${n.type}|${titleOf(n)}|${flagsOf(n)}${ins.length ? ` | in: ${ins.join("; ")}` : ""}${outs.length ? ` | out: ${outs.join("; ")}` : ""}`);
+    lines.push(` ${n.id}|${typeOf(n)}|${titleOf(n)}|${flagsOf(n)}${ins.length ? ` | in: ${ins.join("; ")}` : ""}${outs.length ? ` | out: ${outs.join("; ")}` : ""}`);
   }
   return lines;
 }
@@ -116,7 +118,7 @@ function renderIndex(nodes) {
   const groups = [...allGroups()].sort((a, b) => groupBounds(a)[2] * groupBounds(a)[3] - groupBounds(b)[2] * groupBounds(b)[3]);
   const owner = new Map(); // node -> smallest group containing it
   for (const g of groups) for (const n of groupMembers(g)) if (!owner.has(n)) owner.set(n, g);
-  const short = (n) => `${n.id} ${n.type}${titleOf(n) ? " " + titleOf(n) : ""}${flagsOf(n) ? " [" + flagsOf(n) + "]" : ""}`;
+  const short = (n) => `${n.id} ${typeOf(n)}${titleOf(n) ? " " + titleOf(n) : ""}${flagsOf(n) ? " [" + flagsOf(n) + "]" : ""}`;
   const lines = ["nodes per group (id type title):"];
   for (const g of allGroups()) {
     const mine = nodes.filter((n) => owner.get(n) === g);
@@ -150,12 +152,16 @@ export function getWorkflow({ node_ids, group, query, detail = "auto", include_w
 
   const groups = allGroups();
   const wf = app.extensionManager?.workflow?.activeWorkflow;
+  const trail = subgraphTrail();
   const inSubgraph = app.rootGraph && graph() !== app.rootGraph;
+  const where = trail.length
+    ? `INSIDE subgraph ${JSON.stringify(trail[trail.length - 1].subgraph?.name ?? trail[trail.length - 1].title)} = root node ${trail.map((n) => n.id).join(":")} (ids below are local to it; the subgraph tool exits)`
+    : inSubgraph ? "inside a subgraph" : "root";
   let linkCount = 0;
   for (const n of everything) for (const i of n.inputs ?? []) if (i.link !== null && i.link !== undefined) linkCount++;
 
   let head = `workflow ${JSON.stringify(wf?.filename ?? wf?.path ?? "unsaved")}${wf?.isModified ? " (modified)" : ""}` +
-    ` | graph: ${inSubgraph ? "subgraph (not root)" : "root"} | ${everything.length} nodes, ${linkCount} links, ${groups.length} groups`;
+    ` | graph: ${where} | ${everything.length} nodes, ${linkCount} links, ${groups.length} groups`;
   if (everything.length) {
     const rects = everything.map(nodeRect);
     const x0 = Math.min(...rects.map((r) => r[0])), y0 = Math.min(...rects.map((r) => r[1]));
@@ -217,7 +223,9 @@ export function describeNode(node, { brief = false } = {}) {
     out.pinned = !!(node.flags?.pinned || node.pinned);
     if (node.color) out.color = node.color;
     if (node.bgcolor) out.bgcolor = node.bgcolor;
-    if (node.isSubgraphNode?.()) out.is_subgraph = true;
+  }
+  if (node.isSubgraphNode?.()) {
+    out.subgraph = { name: node.subgraph?.name ?? node.title, nodes_inside: node.subgraph?._nodes?.length ?? 0, look_inside: `subgraph action=enter node_id=${node.id}` };
   }
   return out;
 }
@@ -252,7 +260,7 @@ export function traceConnections({ node_id, direction = "both", depth = 6 }) {
           const m = graph().getNodeById(e.id);
           if (!m) continue;
           seen.set(String(e.id), hop);
-          rows.push(` ${hop}|${m.id}|${m.type}|${titleOf(m)}|${flagsOf(m)}|${e.via}`);
+          rows.push(` ${hop}|${m.id}|${typeOf(m)}|${titleOf(m)}|${flagsOf(m)}|${e.via}`);
           next.push(m);
         }
       }
@@ -260,7 +268,7 @@ export function traceConnections({ node_id, direction = "both", depth = 6 }) {
     }
     return rows;
   };
-  const lines = [`trace from ${start.id} (${start.type}${titleOf(start) ? " " + titleOf(start) : ""}), max ${maxDepth} hops. Rows: hop|id|type|title|flags|via`];
+  const lines = [`trace from ${start.id} (${typeOf(start)}${titleOf(start) ? " " + titleOf(start) : ""}), max ${maxDepth} hops. Rows: hop|id|type|title|flags|via`];
   if (direction !== "downstream") { const up = walk("upstream"); lines.push(`upstream (feeds it): ${up.length || "none"}`, ...up); }
   if (direction !== "upstream") { const down = walk("downstream"); lines.push(`downstream (fed by it): ${down.length || "none"}`, ...down); }
   lines.push("Note: only real links are followed; wireless/virtual routing nodes (e.g. Remote IO, Set/Get, Anything Everywhere) connect nodes without links.");

@@ -32,6 +32,21 @@ ARRANGE = {
     "origin": POS,
     "fit_group_id": {"type": "integer", "description": "Afterwards refit this group around the nodes."},
 }
+AUTO_LAYOUT = {
+    "group": {"description": "Tidy only inside this group (group id or part of its title)."},
+    "node_ids": {"type": "array", "items": NODE_REF, "description": "Tidy only these nodes."},
+    "new_groups": {
+        "type": "array",
+        "description": "Create titled group boxes around these nodes as part of the layout "
+                       "(each node in at most one). Best way to group: the boxes can never overlap.",
+        "items": {"type": "object",
+                  "properties": {"title": {"type": "string"},
+                                 "node_ids": {"type": "array", "items": NODE_REF},
+                                 "color": {"type": "string", "description": "CSS hex; default: a palette."}},
+                  "required": ["title", "node_ids"]}},
+    "spacing": {"type": "number", "description": "1 = normal gaps, 0.6 = tight, 1.5 = roomy."},
+    "dry_run": {"type": "boolean", "description": "Only report the planned size and boxes."},
+}
 CONNECT = {
     "from_node": NODE_REF, "from_output": SLOT, "to_node": NODE_REF, "to_input": SLOT,
 }
@@ -68,7 +83,7 @@ _OPS = {
     "update_node": (UPDATE_NODE, ["node_id"]), "remove_nodes": (REMOVE_NODES, ["node_ids"]),
     "create_group": (CREATE_GROUP, ["title"]), "update_group": (UPDATE_GROUP, ["group_id"]),
     "remove_group": (REMOVE_GROUP, ["group_id"]),
-    "arrange_nodes": (ARRANGE, ["node_ids"]),
+    "arrange_nodes": (ARRANGE, ["node_ids"]), "auto_layout": (AUTO_LAYOUT, []),
 }
 
 
@@ -164,6 +179,17 @@ def register_all():
         "coordinate math, no overlaps). Optionally refit a group around them afterwards. Use this "
         "to put nodes neatly inside a group or to make a group horizontal/vertical.",
         ARRANGE, ["node_ids"], risk="edit"))
+    register(Tool(
+        "auto_layout",
+        "Tidy the layout automatically by following the links: nodes flow left to right in columns "
+        "(whatever feeds a node is on its left), links come out short and level, nothing overlaps. "
+        "Every group is tidied inside, then placed as ONE block and its box refitted, so groups "
+        "never overlap; new_groups creates group boxes the same way. No arguments = the whole "
+        "workflow; group or node_ids = only that part (it stays where it is, and things right of "
+        "or below it are pushed aside if it grows). Pinned nodes, and groups holding one, stay "
+        "put. One undo step. Use this instead of working out positions; arrange_nodes is for a "
+        "plain row/column/grid.",
+        AUTO_LAYOUT, risk="edit", timeout=120))
     register(Tool(
         "edit_graph",
         "Apply many edits in one call and ONE undo step. Each operation is {\"op\": <name>, …args} "

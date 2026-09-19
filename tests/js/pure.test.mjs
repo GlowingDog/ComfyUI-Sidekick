@@ -85,6 +85,173 @@ test("arrange: row, column, grid use real sizes and never overlap", async () => 
   assert.deepEqual(freeSpotInArea([0, 0, 900, 600], 400, 200, taken, { gapX: 60, gapY: 40 }), [0, 240]);
 });
 
+// ---------- auto_layout (dagLayout.js) ----------
+
+const leaf = (id, w = 300, h = 120, x = 0, y = 0) => ({ id, w, h, x, y });
+const hit = (a, b, gap = 0) => a[0] < b[0] + b[2] + gap && a[0] + a[2] + gap > b[0] && a[1] < b[1] + b[3] + gap && a[1] + a[3] + gap > b[1];
+function leafRects(tree, res) {
+  const out = [];
+  const walk = (b) => b.children.forEach((c) => (c.children ? walk(c) : out.push([...res.leaves.get(c.id), c.w, c.h, c.id])));
+  walk(tree);
+  return out;
+}
+const noOverlaps = (rects, gap = 0) => rects.every((a, i) => rects.every((b, j) => i >= j || !hit(a, b, gap)));
+
+test("layoutTree: a chain runs left to right on one line; sockets line up", async () => {
+  const { layoutTree } = await import("../../web/tools/dagLayout.js");
+  const tree = { id: "root", children: [leaf("c", 200, 80), leaf("a", 300, 200), leaf("b", 400, 100)] };
+  const res = layoutTree(tree, [{ from: "a", to: "b" }, { from: "b", to: "c" }], { gapX: 80, gapY: 40 });
+  assert.deepEqual([...["a", "b", "c"].map((id) => res.leaves.get(id))], [[0, 0], [380, 0], [860, 0]]);
+  assert.deepEqual([res.w, res.h, res.columnsOf.get("root")], [1060, 200, 3]);
+  // output socket 100px below a's top feeds an input 30px below b's top -> b sits 70px lower
+  const tilted = layoutTree({ id: "root", children: [leaf("a", 300, 200), leaf("b", 400, 100)] }, [{ from: "a", to: "b", fromDy: 100, toDy: 30 }]);
+  assert.equal(tilted.leaves.get("b")[1] - tilted.leaves.get("a")[1], 70);
+});
+
+test("layoutTree: random DAG has no overlaps and every link points right", async () => {
+  const { layoutTree } = await import("../../web/tools/dagLayout.js");
+  let seed = 7;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const leaves = Array.from({ length: 70 }, (_, i) => leaf(i, 140 + Math.floor(rnd() * 300), 60 + Math.floor(rnd() * 400), rnd() * 3000, rnd() * 3000));
+  const edges = [];
+  for (let j = 1; j < 70; j++) for (let k = 0; k < 2; k++) if (rnd() < 0.7) edges.push({ from: Math.floor(rnd() * j), to: j, fromDy: 40, toDy: 40 + 20 * k });
+  const tree = { id: "root", children: leaves };
+  const res = layoutTree(tree, edges, { gapX: 80, gapY: 40 });
+  const rects = leafRects(tree, res);
+  assert.equal(rects.length, 70);
+  assert.ok(noOverlaps(rects, 39), "nodes keep their gap");
+  for (const e of edges) assert.ok(res.leaves.get(e.to)[0] >= res.leaves.get(e.from)[0] + leaves[e.from].w + 80, `link ${e.from}->${e.to} points right`);
+  assert.ok(rects.every((r) => r[0] >= 0 && r[1] >= 0 && r[0] + r[2] <= res.w + 1e-6 && r[1] + r[3] <= res.h + 1e-6), "everything inside the reported size");
+  assert.deepEqual(layoutTree(tree, edges, { gapX: 80, gapY: 40 }), res, "deterministic");
+});
+
+test("layoutTree: cycles, self links and unknown ids do not hang or overlap", async () => {
+  const { layoutTree } = await import("../../web/tools/dagLayout.js");
+  const tree = { id: "root", children: [leaf("a"), leaf("b"), leaf("c"), leaf("d")] };
+  const edges = [{ from: "a", to: "b" }, { from: "b", to: "c" }, { from: "c", to: "a" }, { from: "c", to: "c" }, { from: "c", to: "d" }, { from: "zz", to: "a" }];
+  const res = layoutTree(tree, edges);
+  assert.ok(noOverlaps(leafRects(tree, res), 39));
+  assert.equal(res.columnsOf.get("root"), 4);
+});
+
+test("layoutTree: a lone feeder sits next to its consumer, loose nodes are packed not stacked", async () => {
+  const { layoutTree } = await import("../../web/tools/dagLayout.js");
+  const chain = ["a", "b", "c", "d"].map((id) => leaf(id));
+  const tree = { id: "root", children: [...chain, leaf("seed", 200, 60)] };
+  const res = layoutTree(tree, [{ from: "a", to: "b" }, { from: "b", to: "c" }, { from: "c", to: "d" }, { from: "seed", to: "d" }]);
+  assert.equal(res.leaves.get("seed")[0], res.leaves.get("c")[0], "seed shares the column right before d");
+  const loose = { id: "root", children: Array.from({ length: 30 }, (_, i) => leaf(i, 300, 100, (i % 6) * 500, Math.floor(i / 6) * 300)) };
+  const packed = layoutTree(loose, []);
+  assert.ok(noOverlaps(leafRects(loose, packed), 39));
+  assert.ok(packed.w > packed.h, `30 loose nodes form a wide block, not one column (${packed.w}x${packed.h})`);
+  assert.ok(packed.leaves.get(0)[1] < packed.leaves.get(29)[1] && packed.leaves.get(0)[0] <= packed.leaves.get(5)[0], "reading order kept");
+});
+
+test("layoutTree: groups are blocks — members stay inside, blocks never overlap, nesting works", async () => {
+  const { layoutTree } = await import("../../web/tools/dagLayout.js");
+  const tree = { id: "root", children: [
+    { id: "g:models", pad: 20, head: 36, minW: 500, children: [leaf("ckpt", 320, 100), leaf("lora", 320, 130)] },
+    { id: "g:sampling", pad: 20, head: 36, children: [
+      leaf("pos", 400, 200), leaf("neg", 400, 200), leaf("ks", 320, 470),
+      { id: "g:latent", pad: 20, head: 36, children: [leaf("empty", 320, 110)] },
+    ] },
+    leaf("decode", 210, 50), leaf("save", 320, 270), leaf("note", 250, 150, 0, 5000),
+  ] };
+  const edges = [
+    { from: "ckpt", to: "lora" }, { from: "lora", to: "pos" }, { from: "lora", to: "neg" }, { from: "lora", to: "ks" },
+    { from: "pos", to: "ks" }, { from: "neg", to: "ks" }, { from: "empty", to: "ks" }, { from: "ks", to: "decode" },
+    { from: "ckpt", to: "decode" }, { from: "decode", to: "save" },
+  ];
+  const res = layoutTree(tree, edges);
+  const rects = leafRects(tree, res);
+  assert.ok(noOverlaps(rects, 39));
+  const inside = (r, box, pad, head) => r[0] >= box[0] + pad - 1e-6 && r[1] >= box[1] + pad + head - 1e-6 && r[0] + r[2] <= box[0] + box[2] - pad + 1e-6 && r[1] + r[3] <= box[1] + box[3] - pad + 1e-6;
+  const rectOf = (id) => rects.find((r) => r[4] === id);
+  for (const id of ["ckpt", "lora"]) assert.ok(inside(rectOf(id), res.blocks.get("g:models"), 20, 36), id);
+  for (const id of ["pos", "neg", "ks", "empty"]) assert.ok(inside(rectOf(id), res.blocks.get("g:sampling"), 20, 36), id);
+  assert.ok(inside(rectOf("empty"), res.blocks.get("g:latent"), 20, 36));
+  assert.ok(inside(res.blocks.get("g:latent"), res.blocks.get("g:sampling"), 20, 36), "nested group inside its parent");
+  assert.ok(res.blocks.get("g:models")[2] >= 500, "minW (long title) respected");
+  assert.deepEqual([res.columnsOf.get("g:models"), res.columnsOf.get("g:sampling"), res.columnsOf.get("root")], [2, 2, 4]);
+  const top = [res.blocks.get("g:models"), res.blocks.get("g:sampling"), rectOf("decode"), rectOf("save"), rectOf("note")];
+  assert.ok(noOverlaps(top, 39), "top-level blocks and loose nodes keep clear of each other");
+  assert.ok(res.blocks.get("g:models")[0] < res.blocks.get("g:sampling")[0] && res.blocks.get("g:sampling")[0] < rectOf("decode")[0] && rectOf("decode")[0] < rectOf("save")[0], "flow order");
+  for (const id of ["ckpt", "lora", "pos", "neg", "ks", "empty"]) assert.ok(!hit(rectOf(id), rectOf("note")) && !hit(rectOf(id), rectOf("decode")));
+});
+
+test("placeColumn keeps order, keeps gaps, centres a crowd on what it wants", async () => {
+  const { placeColumn } = await import("../../web/tools/dagLayout.js");
+  assert.deepEqual(placeColumn([{ want: 0, h: 100, weight: 1 }, { want: 500, h: 100, weight: 1 }], 40), [0, 500]);
+  // three boxes all want top=200: they share the pain around it instead of piling downwards
+  const tops = placeColumn([1, 2, 3].map(() => ({ want: 200, h: 100, weight: 1 })), 40);
+  assert.deepEqual(tops, [60, 200, 340]);
+  // a box with no opinion (weight 0) follows the others
+  const mixed = placeColumn([{ want: 300, h: 100, weight: 2 }, { want: 0, h: 50, weight: 0 }], 40);
+  assert.ok(Math.abs(mixed[0] - 300) < 1 && Math.abs(mixed[1] - 440) < 1, String(mixed));
+});
+
+test("context menu entries: labels lose their HTML, paths match exactly before partially", async () => {
+  const { entryLabel, opensMenu, describeEntries, findEntry } = await import("../../web/tools/menuMatch.js");
+  const menu = [
+    { content: "Queue Selected Output Nodes (rgthree) &nbsp;", disabled: true }, null,
+    { content: "Mode", has_submenu: true }, { content: '<span style="color:#f00">red</span>' },
+    { content: "Colors", has_submenu: true }, "Always", { content: "Pin" }, { content: "Pin all &amp; lock" },
+    { content: "Node Templates", submenu: { options: [] } }, { content: "" }, undefined,
+  ];
+  assert.equal(entryLabel(menu[0]), "Queue Selected Output Nodes (rgthree)");
+  assert.equal(entryLabel(menu[3]), "red");
+  assert.equal(entryLabel("Always"), "Always");
+  assert.equal(entryLabel(menu[7]), "Pin all & lock");
+  assert.ok(opensMenu(menu[2]) && opensMenu(menu[8]) && !opensMenu(menu[6]) && !opensMenu("Always") && !opensMenu(null));
+  assert.deepEqual(describeEntries(menu), ["Queue Selected Output Nodes (rgthree) (disabled)", "Mode ▸", "red", "Colors ▸", "Always", "Pin", "Pin all & lock", "Node Templates ▸"]);
+  assert.deepEqual(describeEntries(menu, 2), ["Queue Selected Output Nodes (rgthree) (disabled)", "Mode ▸", "…6 more"]);
+  assert.equal(findEntry(menu, "pin").entry, menu[6]); // exact beats the partial "Pin all & lock"
+  assert.equal(findEntry(menu, "Mode ▸").entry, menu[2]); // the marker from a listing is tolerated
+  assert.equal(findEntry(menu, "templates").entry, menu[8]);
+  assert.equal(findEntry(menu, "ALWAYS").entry, "Always");
+  assert.match(findEntry(menu, "o").error, /Several entries match/);
+  assert.match(findEntry(menu, "nope").error, /No entry matches "nope". Entries: .*Mode ▸/);
+  assert.ok(findEntry(menu, "").error && findEntry(null, "x").error);
+});
+
+test("run reports: rejection, success with outputs, runtime error, interrupt", async () => {
+  const { rejectionLines, finishedText } = await import("../../web/tools/runReport.js");
+  const describe = (id) => `${id} (X)`;
+  const rejected = {
+    error: { type: "prompt_outputs_failed_validation", message: "Prompt outputs failed validation", details: "" },
+    node_errors: { 3: { class_type: "KSampler", errors: [
+      { type: "required_input_missing", message: "Required input is missing", details: "model" },
+      { type: "value_not_in_list", message: "Value not in list", details: "ckpt_name: 'x.safetensors' not in [...]" }] } },
+  };
+  assert.deepEqual(rejectionLines(rejected, describe), [
+    "Prompt outputs failed validation",
+    " node 3 (X): Required input is missing — model",
+    " node 3 (X): Value not in list — ckpt_name: 'x.safetensors' not in [...]",
+  ]);
+  assert.deepEqual(rejectionLines(undefined), []);
+  assert.deepEqual(rejectionLines({ error: "Queue is full" }), ["Queue is full"]);
+
+  const ok = finishedText("abc", {
+    status: { status_str: "success", completed: true, messages: [
+      ["execution_start", { timestamp: 1000 }], ["execution_cached", { nodes: ["1", "2"], timestamp: 1001 }], ["execution_success", { timestamp: 13500 }]] },
+    outputs: { "57:9": { images: [{ filename: "ComfyUI_00012_.png", subfolder: "", type: "output" }, { filename: "b.png", subfolder: "sub", type: "temp" }] }, 12: { text: ["a cat", "on a mat"] }, 4: {} },
+  }, describe);
+  assert.match(ok, /^prompt abc: SUCCESS after 12\.5s\n 2 node\(s\) came from the cache/);
+  assert.match(ok, / node 57:9 \(X\): ComfyUI_00012_\.png \[output\], sub\/b\.png \[temp\]/);
+  assert.match(ok, / node 12 \(X\): text: "a cat on a mat"/);
+  assert.ok(!ok.includes("node 4 "), "nodes without files or text are not listed");
+
+  const failed = finishedText("def", { status: { status_str: "error", completed: false, messages: [
+    ["execution_start", { timestamp: 0 }],
+    ["execution_error", { timestamp: 2000, node_id: "7", node_type: "SaveImage", exception_type: "Exception", exception_message: "Saving image outside the output folder is not allowed.\n", traceback: ["  File \"a.py\", line 1\n", "  File \"b.py\", line 2\n", "    raise Exception\n"] }]] }, outputs: {} }, describe);
+  assert.match(failed, /^prompt def: ERROR after 2\.0s\n node 7 \(X\) failed: Exception: Saving image outside the output folder is not allowed\.\n traceback \(last lines\):\n/);
+  assert.ok(failed.includes("raise Exception") && !failed.includes("no outputs were produced"));
+
+  const stopped = finishedText("ghi", { status: { status_str: "error", messages: [["execution_start", { timestamp: 0 }], ["execution_interrupted", { timestamp: 500, node_id: "3" }]] }, outputs: {} }, describe);
+  assert.equal(stopped, "prompt ghi: INTERRUPTED after 0.5s at node 3 (X)");
+  assert.match(finishedText("jkl", { status: { status_str: "success", messages: [] }, outputs: {} }), /SUCCESS\nno outputs were produced/);
+});
+
 test("markdown escapes html and only links http(s)", () => {
   const html = renderMarkdown('<img src=x onerror=alert(1)> **bold** `a<b` [x](javascript:alert(1)) [ok](https://a.b/c)');
   assert.ok(!html.includes("<img"));

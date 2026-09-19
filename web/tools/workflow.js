@@ -1,5 +1,9 @@
-// Workflow tabs and saved workflows. Risk per action is decided in sidekick/tooldefs/ui.py.
-import { app, ToolError, tick } from "./graphCtx.js";
+// Workflow tabs, saved workflows, templates and loading workflow JSON. Everything that opens a
+// workflow opens it in its OWN tab: the tab the user was on keeps its state.
+// Risk per action is decided in sidekick/tooldefs/ui.py.
+import { app, ToolError, allNodes, tick, withUndo } from "./graphCtx.js";
+import { api } from "../../../scripts/api.js";
+import { autoLayout } from "./autoLayout.js";
 
 const store = () => {
   const s = app.extensionManager?.workflow;
@@ -44,9 +48,113 @@ const saved = () => {
   return s.persistedWorkflows ?? (s.workflows ?? []).filter((w) => w.isPersisted);
 };
 
+// ---------- templates ----------
+
+let templateCache = null;
+
+async function templates() {
+  if (templateCache) return templateCache;
+  const rows = [];
+  try { // the template library that ships with ComfyUI
+    const index = await (await fetch(api.fileURL("/templates/index.json"))).json();
+    for (const cat of index ?? []) {
+      for (const t of cat.templates ?? []) {
+        rows.push({ name: t.name, title: t.title ?? t.name, category: cat.title ?? "", description: t.description ?? "", url: api.fileURL(`/templates/${t.name}.json`) });
+      }
+    }
+  } catch { /* an old frontend without the index: node-pack templates may still exist */ }
+  try { // example workflows shipped by node packs
+    for (const [pack, names] of Object.entries((await api.getWorkflowTemplates()) ?? {})) {
+      for (const n of names ?? []) rows.push({ name: n, title: n, category: `node pack ${pack}`, description: "", url: api.apiURL(`/workflow_templates/${pack}/${n}.json`) });
+    }
+  } catch { /* none */ }
+  if (rows.length) templateCache = rows;
+  return rows;
+}
+
+async function listTemplates(query) {
+  const toks = String(query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+  const rows = (await templates()).filter((t) => toks.every((k) => `${t.name} ${t.title} ${t.category} ${t.description}`.toLowerCase().includes(k)));
+  if (!rows.length) return toks.length ? `No template matches "${query}". Try fewer words, e.g. "flux", "upscale", "inpaint", "video".` : "This ComfyUI has no templates.";
+  const lines = rows.slice(0, 40).map((t) => `${t.name} | ${t.title} | ${t.category}${t.name.startsWith("api_") ? " | needs a paid Comfy API account" : ""}${t.description ? " | " + t.description.slice(0, 90) : ""}`);
+  return [`templates (${rows.length}${toks.length ? "" : "; pass query to narrow"}): name | title | category | about`, ...lines, rows.length > 40 ? `…${rows.length - 40} more; refine the query.` : ""].filter(Boolean).join("\n");
+}
+
+/** Node types the open graph uses but this ComfyUI does not have (red nodes). */
+function missingTypes() {
+  const known = window.LiteGraph?.registered_node_types ?? {};
+  return [...new Set(allNodes().filter((n) => !n.isSubgraphNode?.() && !(n.type in known)).map((n) => n.type))];
+}
+
+function loadedReport(what) {
+  const missing = missingTypes();
+  const tab = store().activeWorkflow;
+  return `${what}: ${JSON.stringify(tab?.filename ?? tab?.path ?? "?")} is now the active tab (${(store().openWorkflows ?? []).length} open), ${allNodes().length} nodes on the canvas.` + (missing.length
+    ? `\nMISSING node types (red nodes; the pack that provides them is not installed): ${missing.slice(0, 25).join(", ")}`
+    : "") + "\nIf ComfyUI shows a dialog about missing models or nodes, the user has to close it.";
+}
+
+/** A tab name that cannot collide with a saved file (loading under a saved name would bind the
+ *  new content to that file, and the next save would overwrite it). */
+function freeName(wanted) {
+  const base = String(wanted || "Sidekick workflow").replace(/\.json$/i, "").replace(/[\\/:*?"<>|]/g, " ").trim() || "Sidekick workflow";
+  const taken = new Set([...(store().workflows ?? []), ...(store().openWorkflows ?? [])].map((w) => String(w.filename ?? "").toLowerCase()));
+  let name = base;
+  for (let i = 2; taken.has(name.toLowerCase()); i++) name = `${base} (${i})`;
+  return name;
+}
+
+async function openTemplate(target) {
+  if (!target) throw new ToolError("target is required: a template name from list_templates.");
+  const all = await templates();
+  const want = String(target).toLowerCase();
+  const exact = all.filter((t) => t.name.toLowerCase() === want || t.title.toLowerCase() === want);
+  const hits = exact.length ? exact : all.filter((t) => `${t.name} ${t.title}`.toLowerCase().includes(want));
+  if (hits.length !== 1 && !exact.length) throw new ToolError(`${hits.length ? "Several templates match" : "No template matches"} "${target}"${hits.length ? ": " + hits.slice(0, 12).map((t) => t.name).join(", ") : ""}. Use list_templates.`);
+  const t = hits[0];
+  const res = await fetch(t.url);
+  if (!res.ok) throw new ToolError(`Template ${t.name}: HTTP ${res.status}`);
+  await app.loadGraphData(await res.json(), true, true, freeName(t.title));
+  await tick(300);
+  return loadedReport(`opened template "${t.title}" (${t.name}) in a new tab`);
+}
+
+export async function loadWorkflow({ workflow, name } = {}) {
+  let data = workflow;
+  if (typeof data === "string") {
+    try { data = JSON.parse(data); } catch (e) { throw new ToolError(`workflow is not valid JSON: ${e.message}`); }
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new ToolError("workflow must be a JSON object: a saved ComfyUI workflow, or an API-format prompt.");
+  if (data.prompt && data.workflow === undefined && !data.nodes) data = data.prompt; // {"prompt": {...}} as POSTed to /prompt
+  if (Array.isArray(data.nodes)) {
+    await app.loadGraphData(data, true, true, freeName(name));
+    await tick(300);
+    return loadedReport("loaded the workflow in a new tab");
+  }
+  const entries = Object.entries(data);
+  if (!entries.length || !entries.every(([, v]) => v && typeof v === "object" && typeof v.class_type === "string")) {
+    throw new ToolError('Unrecognised workflow JSON. Expected a saved workflow ({"nodes": [...], "links": [...]}) or an API-format prompt ({"3": {"class_type": "KSampler", "inputs": {...}}, …}).');
+  }
+  const known = window.LiteGraph?.registered_node_types ?? {};
+  const unknown = [...new Set(entries.map(([, v]) => v.class_type).filter((t) => !(t in known)))];
+  if (unknown.length) throw new ToolError(`Not loaded: this ComfyUI does not have these node types: ${unknown.slice(0, 25).join(", ")}. Install the packs that provide them, or replace the nodes.`);
+  await app.loadApiJson(data, freeName(name));
+  await tick(300);
+  let tidy = "";
+  try { // API-format JSON has no positions
+    const plan = await withUndo(() => autoLayout({}));
+    tidy = ` and tidied (${plan.columns} columns)`;
+  } catch { /* an empty or odd graph: leave it as ComfyUI arranged it */ }
+  return loadedReport(`loaded the API-format prompt in a new tab${tidy}`);
+}
+
 export async function workflowTabs({ action = "list", target, query } = {}) {
   const run = (id) => app.extensionManager.command.execute(id);
   switch (action) {
+    case "list_templates":
+      return listTemplates(query ?? target);
+    case "open_template":
+      return openTemplate(target);
     case "list":
       return listOpen();
     case "new":
@@ -84,6 +192,6 @@ export async function workflowTabs({ action = "list", target, query } = {}) {
       return (w?.isModified ? "Close started; the tab had unsaved changes, so ComfyUI may be asking the user what to do.\n" : "") + listOpen();
     }
     default:
-      throw new ToolError(`Unknown action "${action}". Use: list, new, switch, list_saved, open, save, close.`);
+      throw new ToolError(`Unknown action "${action}". Use: list, new, switch, list_saved, open, list_templates, open_template, save, close.`);
   }
 }

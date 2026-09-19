@@ -1,26 +1,17 @@
 // Live, incremental graph edits. Every function verifies its own effect and returns a
 // receipt of the state actually reached — third-party packs may veto or rewire links.
-import { app, ToolError, TITLE_H, graph, allNodes, allGroups, getLink, nodeById, groupById, nodeRect, setNodePos, tick } from "./graphCtx.js";
+import { app, ToolError, TITLE_H, GROUP_PAD, graph, allNodes, getLink, nodeById, groupById, nodeRect, groupRect, groupHead, setGroupRect, addGroupBox, setNodePos, tick } from "./graphCtx.js";
 import { autoMatch, describeSlots, resolveSlot } from "./connectMatch.js";
 import { coerceWidgetValue } from "./widgetCoerce.js";
 import { comboValues, describeNode, groupMembers, slotInfo, visibleWidgets } from "./read.js";
 import { arrange, freeSpotInArea, overlaps, union } from "./layoutMath.js";
+import { autoLayout } from "./autoLayout.js";
 
 const GAP_X = 60;
 const GAP_Y = 40;
-const GROUP_PAD = 20;
 const MODE_IDS = { active: 0, muted: 2, bypassed: 4 };
 
 // ---------- placement ----------
-
-const groupRect = (group) => [...(group._bounding ?? [...group.pos, ...group.size])];
-const groupHead = (group) => (group.font_size ?? 24) + 12; // title strip at the top of a group box
-
-function setGroupRect(group, b) {
-  group.pos = [b[0], b[1]];
-  group.size = [Math.max(b[2], 140), Math.max(b[3], 80)];
-  group.recomputeInsideNodes?.();
-}
 
 /** First free spot inside a group; the group grows to contain the node if it has to. */
 function placeInGroup(node, group) {
@@ -244,14 +235,9 @@ export function createGroup(args) {
   if (!(Array.isArray(args.node_ids) && args.node_ids.length) && !Array.isArray(args.bounds)) {
     throw new ToolError("Give node_ids (preferred) or bounds.");
   }
-  const Group = window.LiteGraph?.LGraphGroup ?? window.LGraphGroup;
-  const group = new Group(String(args.title));
-  graph().add(group); // must be in a graph first: geometry setters dereference group.graph
+  if (Array.isArray(args.node_ids)) args.node_ids.forEach(nodeById); // fail before anything is created
+  const group = addGroupBox(args.title); // in the graph first: geometry setters dereference group.graph
   applyGroup(group, args);
-  if (group.id === undefined || group.id === null || group.id < 0) {
-    group.id = Math.max(0, ...allGroups().filter((g) => g !== group).map((g) => Number(g.id) || 0)) + 1;
-  }
-  group.recomputeInsideNodes?.();
   return describeGroup(group);
 }
 
@@ -313,7 +299,7 @@ export function arrangeNodes({ node_ids, direction = "row", columns, gap, origin
 const OPS = {
   add_node: addNode, connect: connectNodes, disconnect, set_widgets: setWidgetValues, update_node: updateNode,
   remove_nodes: removeNodes, create_group: createGroup, update_group: updateGroup, remove_group: removeGroup,
-  arrange_nodes: arrangeNodes,
+  arrange_nodes: arrangeNodes, auto_layout: autoLayout,
 };
 
 function resolveRefs(op, refs) {
@@ -326,6 +312,7 @@ function resolveRefs(op, refs) {
   const out = { ...op };
   for (const k of ["node_id", "from_node", "to_node"]) if (k in out) out[k] = fix(out[k]);
   if (Array.isArray(out.node_ids)) out.node_ids = out.node_ids.map(fix);
+  if (Array.isArray(out.new_groups)) out.new_groups = out.new_groups.map((g) => (Array.isArray(g?.node_ids) ? { ...g, node_ids: g.node_ids.map(fix) } : g));
   if (out.near && typeof out.near === "object") out.near = { ...out.near, node_id: fix(out.near.node_id) };
   return out;
 }
