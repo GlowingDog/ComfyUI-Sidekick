@@ -35,6 +35,9 @@ The user's first two real sessions (API brain, 123-node workflow; session files 
 - [x] Nodes overflowed a group; model did coordinate math by hand. Now: `add_node group_id` (first free spot, group grows), `arrange_nodes` (row/column/grid from real sizes, `fit_group_id`, reports collisions, skips pinned), `update_group fit_to_contents`. Pure math in `web/tools/layoutMath.js` (node-tested).
 - [x] Bug found while testing: `remove_group remove_nodes` deleted the box but left the nodes (LiteGraph's `group._children` is stale right after programmatic moves). Now uses the same geometry test as `get_workflow` (`read.groupMembers`). Verified incl. undo/redo.
 - [x] `tests/py/test_tooldefs.py`: Python frontend tool names == `web/tools/index.js` table, no union types in schemas, < 45 tools, command risk, per-command grants, read-only mode.
+- [x] User report "I have no tool for tabs" after the tools shipped: the server had not been restarted (`/sidekick/status` still said 16 tools; 21 after restart). Prompt now tells the model its tools can change mid-chat so it does not parrot an earlier refusal from the history.
+- [x] Stale server is now visible: `/sidekick/status` returns `restart_needed` (any `sidekick/**/*.py` newer than process start); the panel shows a yellow banner, refreshed on mount, on every send and on reconnect. Verified: banner logic live; flag + route import via `tests/py/test_routes.py` (stubs ComfyUI's `server` so import-time mistakes in `routes.py` are caught before a restart).
+- [ ] Claude CLI: `--system-prompt-snapshot` defaults to `on`, so resumed chats keep the system prompt they started with (tools still refresh via MCP). Verify `off` with a spike before using it.
 - [ ] Still unverified: `workflow_tabs` save/close/open/list_saved against real saved files (only list/new/switch ran live); new tools through a real LLM turn (needs ComfyUI restart — Python tool defs changed).
 
 ## P3 — Sophisticated editing + interaction

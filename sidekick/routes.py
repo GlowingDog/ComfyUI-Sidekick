@@ -2,6 +2,8 @@
 Every route is also reachable under /api (ComfyUI aliases custom routes)."""
 import asyncio
 import logging
+import os
+import time
 
 from aiohttp import web
 from server import PromptServer
@@ -15,6 +17,25 @@ tooldefs.register_all()
 
 _cli_status = {}
 DEV_SESSION = "d0d0d0d0"  # session ids must be hex (they become file names)
+_LOADED_AT = time.time()
+
+
+def _restart_needed():
+    """True when Sidekick's Python on disk is newer than this process. Tool
+    definitions live in Python, so an update is invisible to the model until
+    ComfyUI restarts — without this flag nobody can tell (it cost a real user
+    a confusing "I have no tool for that")."""
+    root = os.path.dirname(os.path.abspath(__file__))
+    try:
+        for folder, _, files in os.walk(root):
+            if "__pycache__" in folder:
+                continue
+            for name in files:
+                if name.endswith(".py") and os.path.getmtime(os.path.join(folder, name)) > _LOADED_AT:
+                    return True
+    except OSError:
+        pass
+    return False
 
 
 def _is_loopback(request):
@@ -51,7 +72,8 @@ async def status(request):
             return out
         _cli_status.update(await loop.run_in_executor(None, probe))
     return web.json_response({"version": VERSION, "dev_mode": bool(cfg.get("dev_mode")),
-                              "cli": _cli_status, "tools": len(registry.all_tools(cfg=cfg))})
+                              "cli": _cli_status, "tools": len(registry.all_tools(cfg=cfg)),
+                              "restart_needed": _restart_needed()})
 
 
 @routes.get("/sidekick/config")

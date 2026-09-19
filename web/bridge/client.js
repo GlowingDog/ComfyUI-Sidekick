@@ -75,7 +75,16 @@ export function setProvider(provider, model) {
   ls.set(LS.provider, provider); ls.set(LS.model, state.model);
 }
 
+/** Cheap poll; tells the panel when Sidekick's Python on disk is newer than the running server. */
+export async function refreshStatus() {
+  try {
+    state.status = await getJSON("/sidekick/status");
+    notify({ type: "status" });
+  } catch { /* server is restarting */ }
+}
+
 export async function send(text) {
+  refreshStatus();
   if (!state.sessionId) newChat();
   ls.set(LS.session, state.sessionId);
   state.running = true;
@@ -130,7 +139,7 @@ export async function startClient() {
   if (started) return;
   started = true;
   api.addEventListener("sidekick.event", onEvent);
-  api.addEventListener("reconnected", () => { if (state.sessionId && state.items.length) loadSession(state.sessionId); });
+  api.addEventListener("reconnected", () => { refreshStatus(); if (state.sessionId && state.items.length) loadSession(state.sessionId); });
   await loadConfig().catch((e) => console.error("[Sidekick] config load failed", e));
   const last = ls.get(LS.session);
   if (last) await loadSession(last); else newChat();

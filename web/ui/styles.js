@@ -22,6 +22,8 @@ select:focus, input:focus, textarea:focus, button:focus-visible { outline: 1px s
 .head { display: flex; align-items: center; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
 .head .title { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.banner { padding: 6px 10px; font-size: 12px; color: #111; background: var(--warn); border-bottom: 1px solid var(--line); }
+.banner[hidden] { display: none; }
 .body { flex: 1; min-height: 0; position: relative; }
 .list { position: absolute; inset: 0; overflow-y: auto; padding: 12px 10px; display: flex; flex-direction: column; gap: 10px; }
 .empty { margin: auto; text-align: center; color: var(--dim); max-width: 260px; }

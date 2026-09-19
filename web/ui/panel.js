@@ -139,6 +139,12 @@ export function mountPanel(container) {
     client.send(text);
   }
 
+  // Tool definitions live in Python: after an update the model cannot see new tools until the
+  // server restarts, and nothing else in the UI would tell the user why.
+  const banner = h("div", { class: "banner", hidden: true,
+    textContent: "Sidekick was updated on disk. Restart ComfyUI to load it — until then the assistant is missing the new tools." });
+  function renderStatus() { banner.hidden = !client.state.status?.restart_needed; }
+
   const nearBottom = () => list.scrollHeight - list.scrollTop - list.clientHeight < 80;
   const toBottom = () => { list.scrollTop = list.scrollHeight; };
 
@@ -181,7 +187,8 @@ export function mountPanel(container) {
   function onChange(change) {
     if (change.type === "full") return renderAll();
     if (change.type === "meta") return renderMeta();
-    if (change.type === "config") return renderConfig();
+    if (change.type === "config") { renderStatus(); return renderConfig(); }
+    if (change.type === "status") return renderStatus();
     if (change.type === "sessions") { if (overlay?.kind === "sessions") showSessions(); return; }
     const stick = nearBottom();
     if (change.type === "item_add") {
@@ -284,7 +291,7 @@ export function mountPanel(container) {
       h("button", { class: "ghost", title: "New chat", textContent: "＋", onclick: () => { closeOverlay(); client.newChat(); input.focus(); } }),
       h("button", { class: "ghost", title: "Chats", textContent: "☰", onclick: () => (overlay?.kind === "sessions" ? closeOverlay() : client.refreshSessions().then(showSessions)) }),
       h("button", { class: "ghost", title: "Settings", textContent: "⚙", onclick: () => (overlay?.kind === "settings" ? closeOverlay() : showSettings()) })),
-    body,
+    banner, body,
     h("div", { class: "composer" }, input, h("div", { class: "row" }, providerSel, modelInput, sendBtn), usage));
   // Shadow DOM retargets events: outside the panel, a key press or paste in one of our inputs
   // looks like it came from a plain <div>, so ComfyUI/LiteGraph shortcuts (Delete, Ctrl+V paste
@@ -294,6 +301,8 @@ export function mountPanel(container) {
 
   container.replaceChildren(host);
   const unsubscribe = client.subscribe(onChange);
+  client.refreshStatus();
+  renderStatus();
   renderConfig();
   renderAll();
   return () => { unsubscribe(); host.remove(); };
