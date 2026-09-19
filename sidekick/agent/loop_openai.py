@@ -64,11 +64,46 @@ class StreamAccumulator:
         return msg
 
 
+KEEP_IMAGES = 2  # every request re-uploads the images still in history
+IMAGE_GONE = "[earlier screenshot removed to save context; take a new one if you need it]"
+NO_VISION_NOTE = ("\n(This model or provider did not accept images, so the screenshot was shown to the "
+                  "user only. Work from get_workflow / get_node instead.)")
+_no_vision = set()  # (base_url, model) pairs that rejected image input in this process
+
+
+def has_images(msg):
+    c = msg.get("content")
+    return isinstance(c, list) and any(isinstance(p, dict) and p.get("type") == "image_url" for p in c)
+
+
+def strip_old_images(messages, keep=KEEP_IMAGES):
+    """In place: only the newest `keep` screenshot messages keep their pixels."""
+    seen = 0
+    for m in reversed(messages):
+        if has_images(m):
+            seen += 1
+            if seen > keep:
+                m["content"] = IMAGE_GONE
+
+
+def image_message(images):
+    parts = [{"type": "text", "text": "[Image(s) returned by the screenshot tool call above]"}]
+    parts += [{"type": "image_url", "image_url": {"url": f"data:{i['mime']};base64,{i['data']}"}}
+              for i in images]
+    return {"role": "user", "content": parts}
+
+
+def _text_len(content):
+    if isinstance(content, list):  # multimodal: count the text parts only
+        return sum(len(p.get("text") or "") for p in content if isinstance(p, dict))
+    return len(content or "")
+
+
 def trim_messages(messages, budget=HISTORY_BUDGET_CHARS):
     """Shrink the oldest tool results until the transcript fits. Message order
     and tool_call/tool pairing are never touched."""
     def size(m):
-        return len(m.get("content") or "") + len(json.dumps(m.get("tool_calls") or ""))
+        return _text_len(m.get("content")) + len(json.dumps(m.get("tool_calls") or ""))
     total = sum(size(m) for m in messages)
     out = list(messages)
     for i, m in enumerate(out):
@@ -123,6 +158,11 @@ async def run(session, client_id, text, provider, model, cfg):
     session.messages.append({"role": "user", "content": text})
     totals = {"input_tokens": 0, "output_tokens": 0}
     send_usage_option = True
+    vision_key = (base_url, model)
+    vision_pref = str(provider.get("vision") or "auto")  # auto: try, remember a rejection
+
+    def can_see():
+        return vision_pref != "off" and (vision_pref == "on" or vision_key not in _no_vision)
 
     timeout = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=300)
     async with aiohttp.ClientSession(timeout=timeout) as http:
@@ -135,20 +175,33 @@ async def run(session, client_id, text, provider, model, cfg):
                 session.append_text(item["ref"], delta, field)
 
             acc = StreamAccumulator(on_text, lambda d: on_text(d, "reasoning"))
-            body = {"model": model, "stream": True, "tools": tools,
-                    "messages": [{"role": "system", "content": prompt.build()}] +
-                    trim_messages(session.messages)}
-            if send_usage_option:
-                body["stream_options"] = {"include_usage": True}
+            strip_old_images(session.messages)
+
+            def make_body():
+                body = {"model": model, "stream": True, "tools": tools,
+                        "messages": [{"role": "system", "content": prompt.build()}] +
+                        trim_messages(session.messages)}
+                if send_usage_option:
+                    body["stream_options"] = {"include_usage": True}
+                return body
             try:
-                await _stream(http, url, headers, body, acc)
+                await _stream(http, url, headers, make_body(), acc)
             except ProviderHTTPError as e:
+                dropped_pixels = False
                 if e.status == 400 and send_usage_option and "stream_options" in str(e):
                     send_usage_option = False
-                    body.pop("stream_options")
-                    await _stream(http, url, headers, body, acc)
+                elif e.status in (400, 404, 415, 422) and any(has_images(m) for m in session.messages):
+                    # Probably a text-only model (e.g. DeepSeek): drop the pixels and try again.
+                    dropped_pixels = True
+                    for m in session.messages:
+                        if has_images(m):
+                            m["content"] = NO_VISION_NOTE.strip()
                 else:
                     raise
+                acc = StreamAccumulator(on_text, lambda d: on_text(d, "reasoning"))
+                await _stream(http, url, headers, make_body(), acc)
+                if dropped_pixels:  # the retry worked, so images really were the problem: remember
+                    _no_vision.add(vision_key)
             if acc.usage:
                 totals["input_tokens"] += acc.usage.get("prompt_tokens", 0) or 0
                 totals["output_tokens"] += acc.usage.get("completion_tokens", 0) or 0
@@ -156,10 +209,19 @@ async def run(session, client_id, text, provider, model, cfg):
             session.messages.append(msg)
             if not msg.get("tool_calls"):
                 return totals
+            shots = []
             for call in msg["tool_calls"]:
-                _, result = await registry.dispatch(ctx, call["function"]["name"],
-                                                    call["function"]["arguments"])
+                _, result, images = await registry.dispatch_full(ctx, call["function"]["name"],
+                                                                 call["function"]["arguments"])
+                if images and not can_see():
+                    result += NO_VISION_NOTE
+                    images = []
+                shots += images
                 session.messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
+            if shots:
+                # Tool messages are text-only in the chat-completions format, so pixels travel in
+                # a user message right after the whole batch of tool results.
+                session.messages.append(image_message(shots))
         session.add_item("notice", text=f"Paused after {MAX_ITERATIONS} steps. Say \"continue\" to go on.")
     return totals
 

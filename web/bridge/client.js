@@ -2,6 +2,7 @@
 // snapshots (GET /sidekick/sessions/{id}) and sequenced `sidekick.event` pushes, and
 // survives the panel being unmounted (sidebar closed, pop-out moved).
 import { api } from "../../../scripts/api.js";
+import { app } from "../../../scripts/app.js";
 
 export async function getJSON(path) {
   const r = await api.fetchApi(path);
@@ -26,6 +27,8 @@ const ls = {
 export const state = {
   sessionId: null, title: "New chat", items: [], seq: 0, running: false, usage: null,
   sessions: [], config: null, status: null,
+  gesture: null, // pending requestGesture(), drawn by the panel
+  mounted: 0, // how many panels are on screen
   provider: ls.get(LS.provider), model: ls.get(LS.model) ?? "",
 };
 
@@ -73,6 +76,35 @@ export async function deleteSession(id) {
 export function setProvider(provider, model) {
   state.provider = provider; state.model = model ?? "";
   ls.set(LS.provider, provider); ls.set(LS.model, state.model);
+}
+
+/**
+ * Some browser APIs (tab sharing) only work inside a user gesture. A tool calls this; the panel
+ * shows `text` with a button; the click runs `run()` inside the gesture and resolves with its
+ * result. Rejects when the user declines, the browser refuses, or nobody answers.
+ */
+export function requestGesture({ text, button, run }) {
+  return new Promise((resolve, reject) => {
+    const finish = (settle, value) => {
+      clearTimeout(timer);
+      state.gesture = null;
+      notify({ type: "gesture" });
+      settle(value);
+    };
+    const timer = setTimeout(() => finish(reject, new Error("The user did not answer the request in time.")), 150000);
+    state.gesture = {
+      text, button,
+      accept: () => {
+        let pending;
+        try { pending = Promise.resolve(run()); } catch (e) { pending = Promise.reject(e); }
+        pending.then((v) => finish(resolve, v), () => finish(reject, new Error("The user or the browser did not allow it.")));
+      },
+      decline: () => finish(reject, new Error("The user declined.")),
+    };
+    notify({ type: "gesture" });
+    // Nobody can click a button in a closed sidebar tab.
+    if (!state.mounted) app.extensionManager?.command?.execute?.("Workspace.ToggleSidebarTab.sidekick");
+  });
 }
 
 /** Cheap poll; tells the panel when Sidekick's Python on disk is newer than the running server. */

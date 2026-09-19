@@ -58,7 +58,7 @@ export function groupMembers(group) {
   });
 }
 
-function findGroup(ref) {
+export function findGroup(ref) {
   const groups = allGroups();
   const byId = groups.find((g) => String(g.id) === String(ref));
   if (byId) return byId;

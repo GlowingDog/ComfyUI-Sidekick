@@ -66,8 +66,12 @@ async def handle_message(msg, list_tools, call_tool):
         name = params.get("name")
         if not isinstance(name, str):
             return _error(msg_id, -32602, "Missing tool name")
-        ok, text = await call_tool(name, params.get("arguments") or {})
-        return _result(msg_id, {"content": [{"type": "text", "text": text}], "isError": not ok})
+        outcome = await call_tool(name, params.get("arguments") or {})
+        ok, text = outcome[0], outcome[1]
+        content = [{"type": "text", "text": text}]
+        for img in (outcome[2] if len(outcome) > 2 else []):  # vision tools: MCP image blocks
+            content.append({"type": "image", "data": img["data"], "mimeType": img["mime"]})
+        return _result(msg_id, {"content": content, "isError": not ok})
     if method in ("resources/list", "prompts/list", "resources/templates/list"):
         key = {"resources/list": "resources", "prompts/list": "prompts",
                "resources/templates/list": "resourceTemplates"}[method]

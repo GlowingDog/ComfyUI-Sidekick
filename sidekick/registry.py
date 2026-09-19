@@ -25,6 +25,10 @@ class Tool:
     max_chars: int = MAX_RESULT_CHARS  # result cap; big-graph readers budget themselves below it
     # Per-call risk for multiplexed tools (run_command, workflow_tabs): args -> read|edit|risky
     risk_fn: Optional[Callable[[dict], str]] = None
+    # Ask first even though nothing is edited (screenshots leave the machine). Unlike
+    # risk="risky" this still works in read-only mode.
+    confirm: bool = False
+    confirm_note: str = ""
 
     def risk_of(self, args):
         if self.risk_fn is None:
@@ -108,9 +112,11 @@ async def _check_permission(ctx, tool, args):
         return ("Denied: Sidekick is in read-only mode. Describe the change instead, or ask the "
                 "user to switch the permission mode in Sidekick settings.")
     key = _grant_key(tool, args)
-    if risk != "risky" or mode == "auto" or key in ctx.session.allowed_tools:
+    needs_card = risk == "risky" or tool.confirm  # confirm: harmless to the graph, but private
+    if not needs_card or mode == "auto" or key in ctx.session.allowed_tools:
         return None
-    answer = await pending.ask(ctx.session, "permission", tool=tool.name, args=args)
+    answer = await pending.ask(ctx.session, "permission", tool=tool.name, args=args,
+                               note=tool.confirm_note or None)
     decision = (answer or {}).get("decision")
     if decision == "allow_session":
         ctx.session.allowed_tools.add(key)
@@ -121,29 +127,58 @@ async def _check_permission(ctx, tool, args):
     return "Denied by the user." + (f" User says: {note}" if note else "")
 
 
+IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
+MAX_IMAGE_B64 = 4_000_000
+MAX_THUMB_CHARS = 120_000
+
+
+def _split_images(result):
+    """Vision tools return {"__images__": [{mime, data(base64)}], "text", "thumb"}.
+    Returns (result_without_images, images, thumb_data_url)."""
+    if not isinstance(result, dict) or "__images__" not in result:
+        return result, [], None
+    images = []
+    for img in result.get("__images__") or []:
+        if (isinstance(img, dict) and img.get("mime") in IMAGE_MIMES and isinstance(img.get("data"), str)
+                and 0 < len(img["data"]) <= MAX_IMAGE_B64 and len(images) < 2):
+            images.append({"mime": img["mime"], "data": img["data"]})
+    thumb = result.get("thumb")
+    if not (isinstance(thumb, str) and thumb.startswith("data:image/") and len(thumb) <= MAX_THUMB_CHARS):
+        thumb = None
+    return result.get("text") or "screenshot taken", images, thumb
+
+
 async def dispatch(ctx, name, args):
     """Run one tool call. Returns (ok, text); never raises except CancelledError."""
+    ok, text, _ = await dispatch_full(ctx, name, args)
+    return ok, text
+
+
+async def dispatch_full(ctx, name, args):
+    """Like dispatch, plus the images a vision tool produced: (ok, text, images)."""
     tool = _tools.get(name)
     if tool is None:
-        return False, f"Unknown tool '{name}'. Available: {', '.join(sorted(_tools))}"
+        return False, f"Unknown tool '{name}'. Available: {', '.join(sorted(_tools))}", []
     if isinstance(args, str):
         try:
             args = json.loads(args) if args.strip() else {}
         except ValueError:
-            return False, "Arguments were not valid JSON."
+            return False, "Arguments were not valid JSON.", []
     if not isinstance(args, dict):
-        return False, "Arguments must be a JSON object."
+        return False, "Arguments must be a JSON object.", []
     missing = [k for k in tool.required if k not in args]
     if missing:
-        return False, f"Missing required argument(s): {', '.join(missing)}"
+        return False, f"Missing required argument(s): {', '.join(missing)}", []
 
     item = None if tool.silent else ctx.session.add_item("tool", name=name, args=args, status="running")
 
-    def finish(ok, text, status=None):
+    def finish(ok, text, status=None, images=(), thumb=None):
         if item is not None:
-            ctx.session.update_item(item, status=status or ("ok" if ok else "error"),
-                                    summary=text[:400])
-        return ok, text
+            patch = {"status": status or ("ok" if ok else "error"), "summary": text[:400]}
+            if thumb:
+                patch["thumb"] = thumb  # the user sees what the model saw
+            ctx.session.update_item(item, **patch)
+        return ok, text, list(images)
 
     try:
         refusal = await _check_permission(ctx, tool, args)
@@ -153,7 +188,8 @@ async def dispatch(ctx, name, args):
             result = await tool.handler(ctx, args)
         else:
             result = await bridge.call(ctx.client_id, name, args, tool.timeout)
-        return finish(True, _to_text(result, tool.max_chars))
+        result, images, thumb = _split_images(result)
+        return finish(True, _to_text(result, tool.max_chars), images=images, thumb=thumb)
     except asyncio.CancelledError:
         finish(False, "Stopped.", "interrupted")
         raise

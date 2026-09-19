@@ -40,10 +40,12 @@ function renderAssistant(item) {
 }
 
 function renderTool(item) {
-  return h("details", { class: "card tool" },
+  // item.thumb: what a screenshot showed the model — always visible, so the user sees it too.
+  const shot = typeof item.thumb === "string" && item.thumb.startsWith("data:image/") ? h("img", { class: "shot", src: item.thumb, alt: "What Sidekick saw" }) : null;
+  return h("div", {}, h("details", { class: "card tool" },
     h("summary", {}, h("span", { class: `dot ${item.status}` }), h("span", { class: "name", textContent: item.name }),
       h("span", { class: "hint", textContent: toolHint(item) })),
-    h("div", { class: "detail", textContent: `${pretty(item.args)}${item.summary ? "\n→ " + item.summary : ""}` }));
+    h("div", { class: "detail", textContent: `${pretty(item.args)}${item.summary ? "\n→ " + item.summary : ""}` })), shot);
 }
 
 function renderQuestion(item) {
@@ -94,6 +96,7 @@ function renderPermission(item) {
   const decide = (decision) => () => client.answer(item.request_id, { decision });
   return h("div", { class: "card ask" },
     h("div", { class: "question", textContent: `Allow Sidekick to run ${item.tool}?` }),
+    item.note ? h("div", { textContent: item.note }) : null,
     h("pre", {}, h("code", { textContent: pretty(item.args) })),
     h("div", { class: "row" },
       h("button", { class: "primary", textContent: "Allow once", onclick: decide("allow") }),
@@ -145,6 +148,17 @@ export function mountPanel(container) {
     textContent: "Sidekick was updated on disk. Restart ComfyUI to load it — until then the assistant is missing the new tools." });
   function renderStatus() { banner.hidden = !client.state.status?.restart_needed; }
 
+  // A tool needs a real click (tab sharing can only start inside a user gesture).
+  const gestureBar = h("div", { class: "gesture", hidden: true });
+  function renderGesture() {
+    const g = client.state.gesture;
+    gestureBar.hidden = !g;
+    if (!g) return gestureBar.replaceChildren();
+    gestureBar.replaceChildren(h("span", { textContent: g.text }),
+      h("button", { class: "primary", textContent: g.button, onclick: () => g.accept() }),
+      h("button", { textContent: "Not now", onclick: () => g.decline() }));
+  }
+
   const nearBottom = () => list.scrollHeight - list.scrollTop - list.clientHeight < 80;
   const toBottom = () => { list.scrollTop = list.scrollHeight; };
 
@@ -189,6 +203,7 @@ export function mountPanel(container) {
     if (change.type === "meta") return renderMeta();
     if (change.type === "config") { renderStatus(); return renderConfig(); }
     if (change.type === "status") return renderStatus();
+    if (change.type === "gesture") return renderGesture();
     if (change.type === "sessions") { if (overlay?.kind === "sessions") showSessions(); return; }
     const stick = nearBottom();
     if (change.type === "item_add") {
@@ -198,7 +213,12 @@ export function mountPanel(container) {
       list.append(el);
     } else if (change.type === "item_update") {
       const old = els.get(change.item.id);
-      if (old) { const el = renderItem(change.item); if (old.tagName === "DETAILS" && old.open) el.open = true; old.replaceWith(el); els.set(change.item.id, el); }
+      if (old) {
+        const el = renderItem(change.item);
+        if (old.querySelector?.("details")?.open) { const d = el.querySelector?.("details"); if (d) d.open = true; } // keep an expanded tool card expanded
+        old.replaceWith(el);
+        els.set(change.item.id, el);
+      }
     } else if (change.type === "text") {
       dirty.add(change.item);
       if (!raf) raf = requestAnimationFrame(() => {
@@ -271,7 +291,10 @@ export function mountPanel(container) {
           h("button", { class: "ghost", title: "Remove provider", textContent: "🗑", onclick: () => saveProviders(c.providers.filter((x) => x.id !== p.id)) })),
         h("label", {}, "Base URL", h("input", { value: p.base_url ?? "", placeholder: "https://…/v1", onchange: (e) => patch("base_url", e.target.value.trim()) })),
         h("label", {}, "API key", keyIn),
-        h("label", {}, "Default model", h("div", { style: "display:flex;gap:6px" }, modelIn, fetchBtn), models));
+        h("label", {}, "Default model", h("div", { style: "display:flex;gap:6px" }, modelIn, fetchBtn), models),
+        h("label", {}, "Can this model see images? (screenshots)", h("select", { onchange: (e) => patch("vision", e.target.value) },
+          [["auto", "Auto — try, and remember if it refuses"], ["on", "Yes"], ["off", "No — never send screenshots"]]
+            .map(([v, t]) => h("option", { value: v, textContent: t, selected: (p.vision ?? "auto") === v })))));
     });
     const addProvider = h("button", { textContent: "＋ Add OpenAI-compatible provider", onclick: () => {
       const id = "custom" + Date.now().toString(36);
@@ -291,7 +314,7 @@ export function mountPanel(container) {
       h("button", { class: "ghost", title: "New chat", textContent: "＋", onclick: () => { closeOverlay(); client.newChat(); input.focus(); } }),
       h("button", { class: "ghost", title: "Chats", textContent: "☰", onclick: () => (overlay?.kind === "sessions" ? closeOverlay() : client.refreshSessions().then(showSessions)) }),
       h("button", { class: "ghost", title: "Settings", textContent: "⚙", onclick: () => (overlay?.kind === "settings" ? closeOverlay() : showSettings()) })),
-    banner, body,
+    banner, body, gestureBar,
     h("div", { class: "composer" }, input, h("div", { class: "row" }, providerSel, modelInput, sendBtn), usage));
   // Shadow DOM retargets events: outside the panel, a key press or paste in one of our inputs
   // looks like it came from a plain <div>, so ComfyUI/LiteGraph shortcuts (Delete, Ctrl+V paste
@@ -301,9 +324,11 @@ export function mountPanel(container) {
 
   container.replaceChildren(host);
   const unsubscribe = client.subscribe(onChange);
+  client.state.mounted++;
   client.refreshStatus();
   renderStatus();
+  renderGesture();
   renderConfig();
   renderAll();
-  return () => { unsubscribe(); host.remove(); };
+  return () => { client.state.mounted = Math.max(0, client.state.mounted - 1); unsubscribe(); host.remove(); };
 }

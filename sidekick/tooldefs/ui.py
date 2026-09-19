@@ -36,6 +36,22 @@ def tabs_risk(args):
 
 def register_all():
     register(Tool(
+        "screenshot",
+        "LOOK at ComfyUI. target \"graph\" (default): picture of the node graph framed on node_ids, "
+        "a group, or the whole workflow — rendered off-screen, the user's view does not move. "
+        "target \"viewport\": the canvas exactly as the user sees it now. target \"ui\": the whole "
+        "browser tab (dialogs, menus, Manager, sidebar, image previews); the user must allow tab "
+        "sharing once. Use it to check layout and overlaps after arranging, to see generated "
+        "images or previews, and when the user talks about how something looks. For facts "
+        "(values, links, types) the text tools are cheaper and exact.",
+        {"target": {"type": "string", "enum": ["graph", "viewport", "ui"]},
+         "node_ids": {"type": "array", "items": {"description": "Node id."},
+                      "description": "graph: frame these nodes."},
+         "group": {"description": "graph: frame this group (id or part of its title)."}},
+        confirm=True, timeout=180,
+        confirm_note="Screenshots are sent to the AI provider you selected. They can include "
+                     "image previews shown on your nodes; \"ui\" captures this whole browser tab."))
+    register(Tool(
         "list_commands",
         "Search ComfyUI's command registry (menu actions, keyboard-shortcut actions, sidebar/panel "
         "toggles, Manager dialogs, commands added by node packs). Returns id | label | source.",

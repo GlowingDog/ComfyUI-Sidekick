@@ -35,6 +35,19 @@ def _new_id():
     return uuid.uuid4().hex[:12]
 
 
+def _without_pixels(msg):
+    """Screenshots stay in memory for the running chat but are never written to
+    disk: a few of them would turn every session file into megabytes."""
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return msg
+    kept = [p for p in content if not (isinstance(p, dict) and p.get("type") == "image_url")]
+    if len(kept) == len(content):
+        return msg
+    kept.append({"type": "text", "text": "[screenshot not kept in the saved history]"})
+    return dict(msg, content=kept)
+
+
 class Session:
     def __init__(self, sid=None, data=None):
         data = data or {}
@@ -99,7 +112,8 @@ class Session:
     def save(self):
         self.updated = time.time()
         data = {"id": self.id, "title": self.title, "created": self.created,
-                "updated": self.updated, "items": self.items, "messages": self.messages,
+                "updated": self.updated, "items": self.items,
+                "messages": [_without_pixels(m) for m in self.messages],
                 "cli": self.cli, "continuation": self.continuation, "seq": self.seq}
         path = _path(self.id)
         tmp = path + ".tmp"

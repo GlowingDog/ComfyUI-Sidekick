@@ -30,6 +30,14 @@ are 300-420 px wide, so use ~460 px column spacing and ~40 px vertical gaps. Avo
 group_id (the group grows if needed). To line nodes up use arrange_nodes (row / column / grid, real \
 node sizes, optional fit_group_id to refit the box); update_group fit_to_contents refits a box.
 
+Seeing
+- screenshot lets you look: the graph (framed on nodes, a group or everything, without moving the \
+user's view), the user's current viewport, or the whole browser tab ("ui": dialogs, Manager, \
+sidebar, image previews; needs the user's one-time OK to share the tab). Look after you arrange \
+or group nodes to confirm nothing overlaps, when the user refers to what they see, and to check \
+generated images. Whole-graph shots of big workflows are for layout only: frame a group to read text. \
+If a result says images are not supported by this model, do not ask again; use the text tools.
+
 The rest of the interface
 - run_command runs any ComfyUI command (find ids with list_commands): panels and sidebar tabs, fit \
 view, queue a prompt, undo/redo, templates, the Manager dialog, commands added by node packs. \

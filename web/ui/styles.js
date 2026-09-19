@@ -22,6 +22,10 @@ select:focus, input:focus, textarea:focus, button:focus-visible { outline: 1px s
 .head { display: flex; align-items: center; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
 .head .title { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.shot { display: block; max-width: 100%; margin-top: 4px; border: 1px solid var(--line); border-radius: 6px; }
+.gesture { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 10px; border-top: 1px solid var(--accent); background: var(--bg2); }
+.gesture[hidden] { display: none; }
+.gesture span { flex: 1 1 140px; }
 .banner { padding: 6px 10px; font-size: 12px; color: #111; background: var(--warn); border-bottom: 1px solid var(--line); }
 .banner[hidden] { display: none; }
 .body { flex: 1; min-height: 0; position: relative; }

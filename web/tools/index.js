@@ -4,6 +4,7 @@ import { getNode, getWorkflow, traceConnections } from "./read.js";
 import { addNode, arrangeNodes, connectNodes, createGroup, disconnect, editGraph, removeGroup, removeNodes, setWidgetValues, updateGroup, updateNode } from "./edit.js";
 import { listCommands, runCommand } from "./commands.js";
 import { workflowTabs } from "./workflow.js";
+import { screenshot } from "./vision.js";
 
 // edit: true -> wrapped in ONE undo step of the active workflow.
 // run_command / workflow_tabs are deliberately NOT wrapped: they may switch tabs mid-call, and
@@ -27,6 +28,7 @@ const TOOLS = {
   list_commands: { fn: listCommands },
   run_command: { fn: runCommand },
   workflow_tabs: { fn: workflowTabs },
+  screenshot: { fn: screenshot },
 };
 
 export async function runTool(name, args) {

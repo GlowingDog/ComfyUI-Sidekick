@@ -190,7 +190,7 @@ async def mcp_endpoint(request):
         return registry.to_mcp(registry.all_tools(binding.get("provider_kind"), cfg))
 
     async def call_tool(name, args):
-        return await registry.dispatch(ctx, name, args)
+        return await registry.dispatch_full(ctx, name, args)
 
     response = await mcp_server.handle_payload(payload, list_tools, call_tool)
     if response is None:
