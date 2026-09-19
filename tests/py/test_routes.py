@@ -66,6 +66,21 @@ class RoutesTests(unittest.TestCase):
     def test_dev_route_is_off_by_default(self):
         self.assertEqual(run(routes.dev_call_tool(FakeRequest(body={"tool": "get_workflow"}))).status, 403)
 
+    def test_rename_and_resume_routes(self):
+        from sidekick import sessions
+        s = sessions.get("abcdef123456", create=True)
+        s.add_item("user", text="hello")
+        s.save()
+        ok = run(routes.rename_session(FakeRequest(match={"sid": s.id}, body={"title": "  My   SDXL\nbuild " + "x" * 200})))
+        self.assertEqual(ok.status, 200)
+        self.assertEqual(sessions.get(s.id).title, ("My SDXL build " + "x" * 200)[:80])
+        self.assertEqual(run(routes.rename_session(FakeRequest(match={"sid": s.id}, body={"title": "   "}))).status, 400)
+        self.assertEqual(run(routes.rename_session(FakeRequest(match={"sid": "ffffffffffff"}, body={"title": "x"}))).status, 404)
+        # nothing booked: resuming is a quiet no-op, never an error and never a turn
+        body = json.loads(run(routes.chat_resume(FakeRequest(body={"session_id": s.id, "client_id": "c1"}))).body)
+        self.assertEqual(body, {"resumed": False})
+        self.assertFalse(s.running)
+
     def test_cli_brains_are_loopback_only(self):
         resp = run(routes.chat(FakeRequest(remote="192.168.1.20",
                                            body={"text": "hi", "client_id": "c", "provider": "claude_cli"})))

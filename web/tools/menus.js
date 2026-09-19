@@ -123,8 +123,9 @@ export async function contextMenu(args = {}) {
       if (opened.length > before) { menu = opened[opened.length - 1]; continue; }
       if (i < steps.length - 1) throw new ToolError(`"${walked.join(" > ")}" did not open a submenu, so "${steps[i + 1]}" cannot be reached. Nothing further was clicked.`);
       await tick(150);
-      return `invoked on ${top.where}: ${walked.join(" > ")}` + (state === "waiting"
-        ? ' — it is still running: it probably opened a dialog that waits for the user (screenshot target "ui" shows it).' : "");
+      const dialogNow = document.querySelector(".graphdialog, .litegraph.dialog, .p-dialog, [role='dialog']");
+      return `invoked on ${top.where}: ${walked.join(" > ")}` + (state === "waiting" || dialogNow
+        ? " — it opened a prompt or dialog: read it with ui_snapshot and answer it with ui_act." : "");
     }
     const lines = describeEntries(menu.values);
     if (action === "invoke") return `"${walked.join(" > ")}" opened a submenu instead of running an action. Extend the path with one of:\n${lines.join("\n")}`;

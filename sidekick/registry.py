@@ -63,17 +63,19 @@ def get(name):
     return _tools.get(name)
 
 
+def switched_off(tool, cfg):
+    """Why the user's settings rule this tool out (None: it is available)."""
+    cfg = cfg or {}
+    if tool.name == "execute_js" and not cfg.get("allow_execute_js"):
+        return "execute_js is switched off. The user can allow it in Sidekick settings → Developer."
+    if tool.name in ("web_search", "web_fetch") and cfg.get("web_tools") is False:
+        return "Internet access is switched off in Sidekick settings."
+    return None
+
+
 def all_tools(provider_kind=None, cfg=None):
-    out = []
-    for t in _tools.values():
-        if provider_kind and provider_kind in t.hide_for:
-            continue
-        if t.name == "execute_js" and not (cfg or {}).get("allow_execute_js"):
-            continue
-        if t.name in ("web_search", "web_fetch") and (cfg or {}).get("web_tools") is False:
-            continue  # the user switched internet access off
-        out.append(t)
-    return out
+    return [t for t in _tools.values()
+            if not (provider_kind and provider_kind in t.hide_for) and switched_off(t, cfg) is None]
 
 
 def to_openai(tools):
@@ -161,6 +163,9 @@ async def dispatch_full(ctx, name, args):
     tool = _tools.get(name)
     if tool is None:
         return False, f"Unknown tool '{name}'. Available: {', '.join(sorted(_tools))}", []
+    off = switched_off(tool, ctx.cfg)  # hidden from the tool list, but a model can still guess the name
+    if off:
+        return False, off, []
     if isinstance(args, str):
         try:
             args = json.loads(args) if args.strip() else {}

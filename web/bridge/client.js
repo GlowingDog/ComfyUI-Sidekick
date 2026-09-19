@@ -94,6 +94,18 @@ export async function deleteSession(id) {
   await refreshSessions();
 }
 
+export async function renameSession(id, title) {
+  const meta = await postJSON(`/sidekick/sessions/${id}`, { title });
+  if (id === state.sessionId) { state.title = meta.title; notify({ type: "meta" }); }
+  await refreshSessions();
+}
+
+/** Tests only (web/dev/paneTests.js): show these items without talking to the server. */
+export function showItemsForTest(items) {
+  state.items = items;
+  notify({ type: "full" });
+}
+
 export function setProvider(provider, model) {
   state.provider = provider; state.model = model ?? "";
   ls.set(LS.provider, provider); ls.set(LS.model, state.model);

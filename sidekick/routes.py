@@ -194,6 +194,20 @@ async def get_session(request):
     return web.json_response(session.snapshot())
 
 
+@routes.post("/sidekick/sessions/{sid}")
+async def rename_session(request):
+    session = sessions.get(request.match_info["sid"])
+    data = await _json(request) or {}
+    title = " ".join(str(data.get("title") or "").split())[:80]
+    if session is None:
+        return _bad("not found", 404)
+    if not title:
+        return _bad("title is required")
+    session.title = title
+    session.save()
+    return web.json_response(session.meta())
+
+
 @routes.delete("/sidekick/sessions/{sid}")
 async def delete_session(request):
     sessions.delete(request.match_info["sid"])

@@ -4,7 +4,9 @@ import { getNode, getWorkflow, traceConnections } from "./read.js";
 import { addNode, arrangeNodes, connectNodes, createGroup, disconnect, editGraph, removeGroup, removeNodes, setWidgetValues, updateGroup, updateNode } from "./edit.js";
 import { autoLayout } from "./autoLayout.js";
 import { listCommands, runCommand } from "./commands.js";
+import { uiAct, uiSnapshot } from "./dom.js";
 import { contextMenu } from "./menus.js";
+import { executeJs } from "./script.js";
 import { queuePrompt, waitForExecution } from "./run.js";
 import { settings } from "./settings.js";
 import { subgraph } from "./subgraph.js";
@@ -43,6 +45,9 @@ const TOOLS = {
   queue_prompt: { fn: queuePrompt },
   wait_for_execution: { fn: waitForExecution },
   screenshot: { fn: screenshot },
+  ui_snapshot: { fn: uiSnapshot },
+  ui_act: { fn: uiAct },
+  execute_js: { fn: executeJs, edit: true },
   // Leading underscore: helpers for Python-side tools, never offered to the model.
   _missing_node_types: { fn: missingNodeTypes },
   _refresh_node_defs: { fn: () => app.extensionManager.command.execute("Comfy.RefreshNodeDefinitions") },

@@ -94,13 +94,16 @@ function renderPermission(item) {
     return h("div", { class: "card ask done", textContent: `${item.tool}: ${d === "deny" || !d ? "denied" : "allowed"}` });
   }
   const decide = (decision) => () => client.answer(item.request_id, { decision });
+  // A script must be readable as written, not as one JSON-escaped line.
+  const { code, ...rest } = item.args ?? {};
+  const shown = typeof code === "string" ? `${code}${Object.keys(rest).length ? "\n\n// other arguments: " + JSON.stringify(rest) : ""}` : pretty(item.args);
   return h("div", { class: "card ask" },
     h("div", { class: "question", textContent: `Allow Sidekick to run ${item.tool}?` }),
     item.note ? h("div", { textContent: item.note }) : null,
-    h("pre", {}, h("code", { textContent: pretty(item.args) })),
+    h("pre", {}, h("code", { textContent: shown })),
     h("div", { class: "row" },
       h("button", { class: "primary", textContent: "Allow once", onclick: decide("allow") }),
-      h("button", { textContent: "Allow for this chat", onclick: decide("allow_session") }),
+      item.tool === "execute_js" ? null : h("button", { textContent: "Allow for this chat", onclick: decide("allow_session") }), // scripts: always one by one
       h("button", { textContent: "Deny", onclick: decide("deny") })));
 }
 
@@ -119,10 +122,20 @@ function renderDownload(item) {
     h("div", { class: "hint", textContent: state }));
 }
 
+function renderTodos(item) {
+  const todos = item.todos ?? [];
+  const done = todos.filter((t) => t.status === "done").length;
+  const mark = { done: "☑", in_progress: "◐", pending: "☐" };
+  return h("div", { class: "card todos" },
+    h("div", { class: "head", textContent: `Plan · ${done}/${todos.length}` }),
+    todos.map((t) => h("div", { class: `todo ${t.status}` }, h("span", { class: "mark", textContent: mark[t.status] ?? "☐" }), h("span", { textContent: t.text }))));
+}
+
 function renderItem(item) {
   switch (item.kind) {
     case "user": return h("div", { class: item.auto ? "notice" : "user", textContent: item.text });
     case "download": return renderDownload(item);
+    case "todos": return renderTodos(item);
     case "assistant": return renderAssistant(item);
     case "tool": return renderTool(item);
     case "question": return renderQuestion(item);
@@ -134,7 +147,8 @@ function renderItem(item) {
 
 // ---------- panel ----------
 
-export function mountPanel(container) {
+/** opts.floating: this panel sits in the floating window; opts.onToggleFloat: pop out / dock back. */
+export function mountPanel(container, opts = {}) {
   const host = h("div", { style: "height:100%;min-height:0" });
   const root = host.attachShadow({ mode: "open" });
   const els = new Map(); // item id -> element
@@ -259,9 +273,21 @@ export function mountPanel(container) {
   }
 
   function showSessions() {
-    const rows = client.state.sessions.map((m) => h("div", { class: `sess${m.id === client.state.sessionId ? " cur" : ""}`, onclick: () => { closeOverlay(); client.loadSession(m.id); } },
-      h("span", { class: "t", textContent: m.title || "Untitled" }), h("span", { class: "d", textContent: new Date(m.updated * 1000).toLocaleDateString() }),
-      h("button", { class: "ghost", title: "Delete chat", textContent: "🗑", onclick: (e) => { e.stopPropagation(); client.deleteSession(m.id); } })));
+    const rows = client.state.sessions.map((m) => {
+      const name = h("span", { class: "t", textContent: m.title || "Untitled" });
+      const rename = (e) => {
+        e.stopPropagation();
+        const box = h("input", { value: m.title || "", style: "flex:1;min-width:0", onclick: (ev) => ev.stopPropagation(),
+          onkeydown: (ev) => { if (ev.key === "Enter") box.blur(); if (ev.key === "Escape") { box.value = m.title || ""; box.blur(); } },
+          onblur: () => { const t = box.value.trim(); if (t && t !== m.title) client.renameSession(m.id, t); else box.replaceWith(name); } });
+        name.replaceWith(box);
+        box.focus(); box.select();
+      };
+      return h("div", { class: `sess${m.id === client.state.sessionId ? " cur" : ""}`, onclick: () => { closeOverlay(); client.loadSession(m.id); } },
+        name, h("span", { class: "d", textContent: new Date(m.updated * 1000).toLocaleDateString() }),
+        h("button", { class: "ghost", title: "Rename chat", textContent: "✎", onclick: rename }),
+        h("button", { class: "ghost", title: "Delete chat", textContent: "🗑", onclick: (e) => { e.stopPropagation(); client.deleteSession(m.id); } }));
+    });
     openOverlay("sessions", h("h4", { textContent: "Chats" }), rows.length ? rows : h("div", { class: "hint", textContent: "No saved chats yet." }));
   }
 
@@ -274,6 +300,7 @@ export function mountPanel(container) {
     const def = h("select", { onchange: () => client.saveConfig({ default_provider: def.value }) },
       (c.providers ?? []).map((p) => h("option", { value: p.id, textContent: p.name, selected: p.id === c.default_provider })));
     const dev = h("input", { type: "checkbox", checked: !!c.dev_mode, onchange: () => client.saveConfig({ dev_mode: dev.checked }) });
+    const js = h("input", { type: "checkbox", checked: !!c.allow_execute_js, onchange: () => client.saveConfig({ allow_execute_js: js.checked }) });
     // API providers: keys are write-only (the server only ever returns a hint)
     const saveProviders = (list) => client.saveConfig({ providers: list }).then(showSettings);
     const providerCards = (c.providers ?? []).filter((p) => p.kind === "openai").map((p) => {
@@ -346,11 +373,13 @@ export function mountPanel(container) {
       h("h4", { textContent: "API providers" }), providerCards, addProvider,
       h("h4", { textContent: "CLIs" }), h("div", { class: "hint", textContent: `Claude CLI: ${cli("claude")}` }), h("div", { class: "hint", textContent: `Codex CLI: ${cli("codex")}` }),
       h("h4", { textContent: "Developer" }), h("label", { class: "check" }, dev, "Dev mode (enables /sidekick/dev/call_tool on localhost)"),
+      h("label", { class: "check" }, js, "Let the assistant run JavaScript in this page (execute_js). You are shown every script and must allow it each time."),
       h("div", { class: "hint", textContent: `Sidekick ${st.version ?? ""} · ${st.tools ?? "?"} tools` }));
   }
 
   const sk = h("div", { class: "sk" },
     h("div", { class: "head" }, title,
+      opts.onToggleFloat ? h("button", { class: "ghost", title: opts.floating ? "Dock into the sidebar" : "Pop out into a floating window", textContent: opts.floating ? "⇤" : "⧉", onclick: () => opts.onToggleFloat() }) : null,
       h("button", { class: "ghost", title: "New chat", textContent: "＋", onclick: () => { closeOverlay(); client.newChat(); input.focus(); } }),
       h("button", { class: "ghost", title: "Chats", textContent: "☰", onclick: () => (overlay?.kind === "sessions" ? closeOverlay() : client.refreshSessions().then(showSessions)) }),
       h("button", { class: "ghost", title: "Settings", textContent: "⚙", onclick: () => (overlay?.kind === "settings" ? closeOverlay() : showSettings()) })),

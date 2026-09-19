@@ -252,6 +252,43 @@ test("run reports: rejection, success with outputs, runtime error, interrupt", a
   assert.match(finishedText("jkl", { status: { status_str: "success", messages: [] }, outputs: {} }), /SUCCESS\nno outputs were produced/);
 });
 
+test("ui tools: keys, control lines, budgets, picking by label", async () => {
+  const { parseKey, describeControl, limitLines, pickByText } = await import("../../web/tools/uiText.js");
+  const k = (spec) => { const { key, code, keyCode, ctrlKey, shiftKey, altKey, metaKey, error } = parseKey(spec); return error ? "ERR" : [key, code, keyCode, [ctrlKey && "c", shiftKey && "s", altKey && "a", metaKey && "m"].filter(Boolean).join("")]; };
+  assert.deepEqual(k("Escape"), ["Escape", "Escape", 27, ""]);
+  assert.deepEqual(k("enter"), ["Enter", "Enter", 13, ""]);
+  assert.deepEqual(k("ctrl+z"), ["z", "KeyZ", 90, "c"]);
+  assert.deepEqual(k("Ctrl + Shift + Z"), ["Z", "KeyZ", 90, "cs"]);
+  assert.deepEqual(k("alt+F4"), ["F4", "F4", 115, "a"]);
+  assert.deepEqual(k("cmd+/"), ["/", "Slash", 191, "m"]);
+  assert.deepEqual(k("ctrl++"), ["+", "Equal", 187, "c"]);
+  assert.deepEqual(k("+"), ["+", "Equal", 187, ""]);
+  assert.deepEqual(k("down"), ["ArrowDown", "ArrowDown", 40, ""]);
+  assert.deepEqual(k("5"), ["5", "Digit5", 53, ""]);
+  for (const bad of ["", "ctrl+banana", "hyper+a", "ab"]) assert.equal(k(bad), "ERR", bad);
+  assert.equal(parseKey("x").bubbles && parseKey("x").composed, true);
+
+  assert.equal(describeControl({ ref: "e3", role: "textbox", label: " Search\n nodes ", value: "" }), '[e3] textbox "Search nodes" value=""');
+  assert.equal(describeControl({ ref: "e4", role: "checkbox", label: "Enable", checked: false, disabled: true }), '[e4] checkbox "Enable" unchecked disabled');
+  assert.equal(describeControl({ ref: "e5", role: "textbox", label: "API key", secret: true, value: "sk-123" }), '[e5] textbox "API key" value=(hidden)');
+  assert.equal(describeControl({ ref: "e6", role: "tab", label: "", selected: true, expanded: false }), '[e6] tab "(no label)" selected collapsed');
+  const many = describeControl({ ref: "e7", role: "combobox", label: "Model", value: "a", options: Array.from({ length: 30 }, (_, i) => `opt${i}`) });
+  assert.ok(many.includes("options: opt0 | opt1") && many.endsWith("…(30 in total)") && !many.includes("opt12"));
+  assert.ok(describeControl({ ref: "e8", role: "button", label: "x".repeat(300) }).length < 110);
+
+  const lines = [{ header: true, text: "dialog:" }, { text: '  [e1] button "Install"' }, { text: "  ComfyUI Impact Pack" }, { text: '  [e2] button "Uninstall"' }];
+  assert.deepEqual(limitLines(lines, { query: "install" }), ["dialog:", '  [e1] button "Install"', '  [e2] button "Uninstall"']);
+  assert.deepEqual(limitLines(lines, { limit: 2 }), ["dialog:", '  [e1] button "Install"', "…2 more line(s): pass query to narrow, or a higher limit."]);
+  assert.deepEqual(limitLines(lines, { query: "zzz" }), ["dialog:", '(nothing on screen matches "zzz")']);
+
+  const controls = [{ ref: "e1", role: "button", label: "Install" }, { ref: "e2", role: "button", label: "Uninstall" }, { ref: "e3", role: "button", label: "Close", disabled: true }, { ref: "e4", role: "tab", label: "Installed packs" }];
+  assert.equal(pickByText(controls, "install").control.ref, "e1"); // exact beats "Uninstall" and "Installed packs"
+  assert.equal(pickByText(controls, "packs").control.ref, "e4");
+  assert.match(pickByText(controls, "inst").error, /3 elements match "inst": \[e1\] button "Install"/);
+  assert.match(pickByText(controls, "close").error, /Nothing clickable/); // disabled controls are not offered
+  assert.ok(pickByText(controls, " ").error);
+});
+
 test("markdown escapes html and only links http(s)", () => {
   const html = renderMarkdown('<img src=x onerror=alert(1)> **bold** `a<b` [x](javascript:alert(1)) [ok](https://a.b/c)');
   assert.ok(!html.includes("<img"));

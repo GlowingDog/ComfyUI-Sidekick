@@ -68,6 +68,12 @@ pre code { background: none; padding: 0; }
 .ask.done { border-color: var(--line); color: var(--dim); }
 .ask pre { margin: 0; max-height: 160px; }
 
+.todos { padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; }
+.todos .head { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); margin-bottom: 2px; }
+.todo { display: flex; gap: 7px; align-items: baseline; }
+.todo .mark { flex: none; width: 1.1em; color: var(--dim); }
+.todo.in_progress { font-weight: 600; } .todo.in_progress .mark { color: var(--accent); }
+.todo.done { color: var(--dim); text-decoration: line-through; } .todo.done .mark { color: var(--ok); text-decoration: none; }
 .dl { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
 .dl .name { font: 12px ui-monospace, Consolas, monospace; }
 .dl .hint { color: var(--dim); font-size: 12px; overflow-wrap: anywhere; }

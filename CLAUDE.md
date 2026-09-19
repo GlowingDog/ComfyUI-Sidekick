@@ -73,7 +73,16 @@ Browser (web/)                                    Python (sidekick/, inside the 
 - Live testing needs a running ComfyUI. If the user's (:8188) is down, start your own on **:8189** (`python_embeded\python.exe -s ComfyUI\main.py --windows-standalone-build --port 8189 --disable-auto-launch`, background, ~2 min to boot) and stop it when done; never restart the user's instance without asking. After a page reload wait for `app.extensionManager.workflow.activeWorkflow` before calling tools (tabs restore late). To run something without loading a model: `EmptyImage → PreviewImage`; a guaranteed runtime error: `SaveImage` with `filename_prefix: "../../x"`.
 - Live-test browser tools without restarting the server: in the Browser pane, `const { runTool } = await import('/extensions/ComfyUI-Sidekick/tools/index.js')` (same module instance ComfyUI loaded). Python tool-def changes still need a ComfyUI restart before an LLM can see them.
 
+## Interface reach (P5)
+- `dom.js` must never enter Shadow roots and must skip `[data-sidekick-ui]`: that is what keeps the model away from its own permission cards. Anything of ours that lives in the light DOM (the floating frame, test containers) carries that attribute.
+- Synthetic events are untrusted: set values through the native `value` setter + `input`/`change` (frameworks wrap the property), pass `keyCode`/`which` in `KeyboardEvent` inits (LiteGraph checks `keyCode == 13`), and click with the full pointer/mouse sequence plus `el.click()`.
+- The Browser pane used for testing is often **hidden with a 0×0 viewport** (`innerWidth === 0`): geometry assertions must tolerate that; `getClientRects()` still works.
+- `execute_js` and the web tools are governed by `registry.switched_off()` (tool list AND dispatch). A tool that needs a per-call grant sets `risk_fn` (the grant key then includes the arguments).
+- The panel can be mounted several times at once (sidebar, floating window, pane tests): all state is in `bridge/client.js`; `mountPanel(container, {floating, onToggleFloat})` returns its unmount function.
+- API-brain history is compacted **in place and in one sweep** (`loop_openai.compact_history`) to keep provider prefix caches valid; never trim a little on every request.
+
 ## Tests
+- In the browser (no tokens): `const t = await import("/extensions/ComfyUI-Sidekick/dev/paneTests.js"); await t.run()` → `{passed, failed, failures, checks}`. Run it after any change to `web/ui/*` or `web/tools/dom.js`.
 - Python (run each file; `tests/py` is not an importable package name): `..\..\..\python_embeded\python.exe tests\py\test_core.py`, `…\test_openai_loop.py`, `…\test_codex.py`, `…\test_tooldefs.py`, `…\test_routes.py`, `…\test_vision.py`, `…\test_web.py`, `…\test_manager.py` (mock Manager), `…\test_downloads.py` (stubs `folder_paths`)
 - Anything with arithmetic or text formatting goes in a **pure module** (no ComfyUI imports) so node can test it: `layoutMath.js`, `dagLayout.js`, `menuMatch.js`, `runReport.js`, `connectMatch.js`, `widgetCoerce.js`.
 - **Never patch source files with ad-hoc Python/sed scripts** — use the Edit tool (scripted rewrites make the harness re-echo whole files into context).

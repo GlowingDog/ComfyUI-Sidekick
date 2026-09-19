@@ -99,6 +99,37 @@ def _text_len(content):
     return len(content or "")
 
 
+SOFT_BUDGET_CHARS = 120_000  # ~30k tokens of history: time to tidy up
+KEEP_RECENT_RESULTS = 6
+HEAD_CHARS = 300
+COMPACTED_TAIL = "​"  # invisible marker: this result was already shortened
+
+
+def compact_history(messages, soft=SOFT_BUDGET_CHARS, keep_recent=KEEP_RECENT_RESULTS):
+    """In place. When the transcript passes the soft budget, every tool result except the newest
+    few is cut down to its first lines — all at once. Doing it in one sweep (instead of trimming a
+    little on every request) changes the conversation prefix once and then leaves it alone, so
+    providers that cache by prefix (DeepSeek, OpenAI, …) keep hitting their cache. Order and
+    tool_call/tool pairing are untouched. Returns how many results were shortened."""
+    def total():
+        return sum(_text_len(m.get("content")) for m in messages)
+
+    if total() <= soft:
+        return 0
+    results = [m for m in messages if m.get("role") == "tool" and isinstance(m.get("content"), str)]
+    cut = 0
+    for keep in (keep_recent, 2):  # still too big with the newest six in full (huge graphs): keep two
+        for m in results[:-keep] if keep else results:
+            text = m["content"]
+            if len(text) > HEAD_CHARS + 120 and not text.endswith(COMPACTED_TAIL):
+                m["content"] = (f"{text[:HEAD_CHARS]}\n…[{len(text) - HEAD_CHARS} more characters of this older result were "
+                                f"dropped to save context; call the tool again if you need them]{COMPACTED_TAIL}")
+                cut += 1
+        if total() <= soft:
+            break
+    return cut
+
+
 def trim_messages(messages, budget=HISTORY_BUDGET_CHARS):
     """Shrink the oldest tool results until the transcript fits. Message order
     and tool_call/tool pairing are never touched."""
@@ -176,6 +207,7 @@ async def run(session, client_id, text, provider, model, cfg):
 
             acc = StreamAccumulator(on_text, lambda d: on_text(d, "reasoning"))
             strip_old_images(session.messages)
+            compact_history(session.messages)
 
             def make_body():
                 body = {"model": model, "stream": True, "tools": tools,

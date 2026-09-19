@@ -119,8 +119,8 @@ def register_all():
         "add (e.g. rgthree, Impact, KJNodes helpers, 'Convert to Subgraph', 'Colors', 'Shapes', "
         "'Bypass', 'Add Node'). action list shows the entries at path (▸ marks a submenu; pass the "
         "path to look inside it); action invoke clicks the entry at the end of path, e.g. "
-        "[\"Colors\", \"red\"] or [\"Mode\", \"Never\"]. Graph changes are one undo step. Entries "
-        "that open a text dialog need the user. Prefer the dedicated tools when one exists "
+        "[\"Colors\", \"red\"] or [\"Mode\", \"Never\"]. Graph changes are one undo step. An entry "
+        "that opens a text prompt or dialog: continue with ui_snapshot / ui_act. Prefer the dedicated tools when one exists "
         "(update_node for mode/colour/title, remove_nodes, …); use this for pack-specific actions.",
         {"target": {"type": "string", "enum": ["node", "group", "canvas"]},
          "node_id": {"description": "target node: the node id."},
@@ -142,6 +142,42 @@ def register_all():
          "value": {"description": "set: the new value (boolean, number, or option text)."},
          "limit": {"type": "integer"}},
         risk="risky", risk_fn=settings_risk))
+    register(Tool(
+        "ui_snapshot",
+        "Read what is on screen OUTSIDE the node graph as a text outline: an open dialog, the Manager's windows, a "
+        "menu, a drop-down's options, a canvas text prompt, toasts; with nothing open, the page's menus, sidebars and "
+        "panels. Every control gets a ref like [e12] for ui_act. Use it when no dedicated tool covers what you need, "
+        "and after an action that opens something. query narrows big lists.",
+        {"scope": {"type": "string", "enum": ["auto", "page", "overlays"],
+                   "description": "auto (default): the open dialogs/menus if any, else the page."},
+         "query": {"type": "string", "description": "Only lines containing these words."},
+         "limit": {"type": "integer", "description": "Max lines, default 120."}}))
+    register(Tool(
+        "ui_act",
+        "Operate the interface like the user would: action click (ref from ui_snapshot, or text = the label; double, "
+        "right), type (value into a text field; clear=false appends; submit=true presses Enter), select (value in a "
+        "native drop-down), key (key such as \"Escape\", \"Enter\", \"ctrl+s\", optionally on a ref), hover. The reply "
+        "shows what is on screen afterwards, with new refs. The user is asked once per chat. It never touches "
+        "Sidekick's own panel or password fields. Prefer the dedicated tools for the graph, settings, the Manager, "
+        "models and workflows: they are exact; this is for everything they do not reach.",
+        {"action": {"type": "string", "enum": ["click", "type", "select", "key", "hover"]},
+         "ref": {"type": "string", "description": "Element ref from the last ui_snapshot / ui_act reply, e.g. e12."},
+         "text": {"type": "string", "description": "Instead of ref: the visible label of the element."},
+         "value": {"type": "string", "description": "type: the text. select: the option."},
+         "key": {"type": "string", "description": "key: e.g. Escape, Enter, Tab, ArrowDown, F2, ctrl+shift+z."},
+         "clear": {"type": "boolean"}, "submit": {"type": "boolean"},
+         "double": {"type": "boolean"}, "right": {"type": "boolean"}},
+        risk="risky", timeout=90,
+        confirm_note="Sidekick will click, type and press keys in the ComfyUI interface the way you would. "
+                     "\"Allow for this chat\" lets it carry on without asking each time."))
+    register(Tool(
+        "execute_js",
+        "Run JavaScript in the ComfyUI page: the body of an async function with `app`, `api`, `graph` (the graph on "
+        "the canvas) and `LiteGraph` in scope; `return` the result. Last resort when no other tool can do it. The "
+        "user sees and approves every script.",
+        {"code": {"type": "string"}, "timeout_s": {"type": "integer", "description": "Default 30, max 120."}},
+        ["code"], risk="risky", risk_fn=lambda a: "risky",  # risk_fn: the grant is per script, never per tool
+        timeout=150, confirm_note="This runs code inside your ComfyUI page. Read it before you allow it."))
     register(Tool(
         "queue_prompt",
         "Run the workflow on the canvas (same as the Run button) and, by default, wait for the "
