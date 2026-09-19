@@ -157,8 +157,10 @@ export function mountPanel(container, opts = {}) {
   const title = h("span", { class: "title" });
   const list = h("div", { class: "list" });
   const body = h("div", { class: "body" }, list);
-  const providerSel = h("select", { title: "Brain", onchange: () => { client.setProvider(providerSel.value, ""); modelInput.value = ""; syncModelPlaceholder(); } });
-  const modelInput = h("input", { placeholder: "model (default)", title: "Model override", onchange: () => client.setProvider(providerSel.value, modelInput.value.trim()) });
+  const OTHER = "__other__"; // picker entry that opens a box for a model id the list does not have
+  const providerSel = h("select", { title: "Brain", onchange: () => { client.setProvider(providerSel.value); renderBrain(); } });
+  const modelSel = h("select", { class: "model", title: "Model", onchange: () => (modelSel.value === OTHER ? askModelId() : (client.setModel(modelSel.value), renderBrain())) });
+  const effortSel = h("select", { class: "effort", title: "Effort: how long the model thinks before it acts", onchange: () => client.setEffort(effortSel.value) });
   const usage = h("span", { class: "usage" });
   const sendBtn = h("button", { class: "primary", onclick: () => (client.state.running ? client.stop() : submit()) });
   const input = h("textarea", { placeholder: "Ask Sidekick to build or change this workflow…", rows: 2,
@@ -192,9 +194,50 @@ export function mountPanel(container, opts = {}) {
   const nearBottom = () => list.scrollHeight - list.scrollTop - list.clientHeight < 80;
   const toBottom = () => { list.scrollTop = list.scrollHeight; };
 
-  function syncModelPlaceholder() {
-    const p = client.state.config?.providers?.find((x) => x.id === providerSel.value);
-    modelInput.placeholder = p?.model ? `model (${p.model})` : "model (default)";
+  // The two pickers next to Send. Models and effort levels come from the brain itself
+  // (GET /sidekick/brain_options); each model may bring its own effort levels and default.
+  const nice = (level) => ({ xhigh: "X-high" }[level] ?? level.charAt(0).toUpperCase() + level.slice(1));
+  let brainSeq = 0;
+  function drawBrain(opts, real = false) {
+    const p = client.state.config?.providers?.find((x) => x.id === client.state.provider);
+    const cur = client.state.model;
+    const models = [...(opts.models ?? [])];
+    if (cur && !models.some((m) => m.id === cur)) models.unshift({ id: cur, label: cur }); // typed by hand earlier
+    modelSel.replaceChildren(
+      h("option", { value: "", textContent: p?.model ? `Default (${p.model})` : "Default model" }),
+      ...models.map((m) => h("option", { value: m.id, textContent: m.label, selected: m.id === cur })), // spread: replaceChildren() does not flatten
+      h("option", { value: OTHER, textContent: "Other…" }));
+    modelSel.title = opts.note ? `Model — ${opts.note}` : "Model";
+    const chosen = models.find((m) => m.id === cur) ?? (cur ? null : (opts.models ?? []).find((m) => m.id === p?.model));
+    const levels = chosen?.efforts?.length ? chosen.efforts : opts.efforts ?? [];
+    // Only the brain's real answer may drop a remembered effort (this model has no such level) —
+    // never the empty placeholder drawn first, and never a failed lookup.
+    if (real && !opts.note && client.state.effort && !levels.includes(client.state.effort)) client.setEffort("");
+    effortSel.replaceChildren(
+      h("option", { value: "", textContent: chosen?.default_effort ? `Effort: ${nice(chosen.default_effort)} (default)` : "Default effort" }),
+      ...levels.map((l) => h("option", { value: l, textContent: nice(l), selected: l === client.state.effort })));
+    effortSel.hidden = !levels.length;
+  }
+  async function renderBrain(refresh = false) {
+    const seq = ++brainSeq;
+    drawBrain({ models: [], efforts: [] }); // right away: "Default" plus whatever is selected
+    const opts = await client.brainOptions(client.state.provider, refresh);
+    if (seq === brainSeq) drawBrain(opts, true); // the brain may have been switched meanwhile
+  }
+  function askModelId() {
+    let done = false;
+    const finish = (keep) => {
+      if (done) return;
+      done = true;
+      const id = box.value.trim();
+      box.replaceWith(modelSel);
+      if (keep && id) client.setModel(id);
+      renderBrain();
+    };
+    const box = h("input", { class: "model", placeholder: "model id, then Enter", onblur: () => finish(true),
+      onkeydown: (e) => { if (e.key === "Enter") finish(true); else if (e.key === "Escape") finish(false); } });
+    modelSel.replaceWith(box);
+    box.focus();
   }
 
   function renderMeta() {
@@ -209,8 +252,7 @@ export function mountPanel(container, opts = {}) {
   function renderConfig() {
     const s = client.state;
     providerSel.replaceChildren(...(s.config?.providers ?? []).map((p) => h("option", { value: p.id, textContent: p.name, selected: p.id === s.provider })));
-    modelInput.value = s.model ?? "";
-    syncModelPlaceholder();
+    renderBrain();
   }
 
   function renderAll() {
@@ -384,7 +426,7 @@ export function mountPanel(container, opts = {}) {
       h("button", { class: "ghost", title: "Chats", textContent: "☰", onclick: () => (overlay?.kind === "sessions" ? closeOverlay() : client.refreshSessions().then(showSessions)) }),
       h("button", { class: "ghost", title: "Settings", textContent: "⚙", onclick: () => (overlay?.kind === "settings" ? closeOverlay() : showSettings()) })),
     banner, body, gestureBar,
-    h("div", { class: "composer" }, input, h("div", { class: "row" }, providerSel, modelInput, sendBtn), usage));
+    h("div", { class: "composer" }, input, h("div", { class: "row" }, providerSel, modelSel, effortSel, sendBtn), usage));
   // Shadow DOM retargets events: outside the panel, a key press or paste in one of our inputs
   // looks like it came from a plain <div>, so ComfyUI/LiteGraph shortcuts (Delete, Ctrl+V paste
   // nodes, …) could fire while the user types or pastes an API key. Keep those events inside.

@@ -87,7 +87,8 @@ pre code { background: none; padding: 0; }
 .composer { border-top: 1px solid var(--line); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
 .composer textarea { width: 100%; resize: none; min-height: 54px; max-height: 200px; }
 .composer .row { display: flex; gap: 6px; align-items: center; }
-.composer .row select { flex: 1 1 110px; } .composer .row input { flex: 2 1 90px; }
+.composer .row select { flex: 1 1 90px; text-overflow: ellipsis; } .composer .row input { flex: 2 1 90px; }
+.composer .row select.model { flex: 2 1 110px; } .composer .row select.effort { flex: 0 1 84px; }
 .usage { color: var(--dim); font-size: 11px; }
 
 .overlay { position: absolute; inset: 0; background: var(--bg); overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; z-index: 2; }

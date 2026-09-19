@@ -106,7 +106,7 @@ class ClaudeEventMapper:
                 "cost_usd": r.get("total_cost_usd"), "turns": r.get("num_turns")}
 
 
-def build_argv(prefix, mcp_config_path, system_prompt_path, model=None, resume=None):
+def build_argv(prefix, mcp_config_path, system_prompt_path, model=None, resume=None, effort=None):
     argv = list(prefix) + [
         "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
         "--mcp-config", mcp_config_path, "--strict-mcp-config",
@@ -120,12 +120,14 @@ def build_argv(prefix, mcp_config_path, system_prompt_path, model=None, resume=N
     ]
     if model:
         argv += ["--model", model]
+    if effort:
+        argv += ["--effort", effort]  # low | medium | high | xhigh | max (claude --help)
     if resume:
         argv += ["--resume", resume]
     return argv
 
 
-async def run(session, client_id, text, provider, model):
+async def run(session, client_id, text, provider, model, effort=None):
     prefix = cli_common.resolve("claude", provider.get("cli_path"))
     if not prefix:
         raise RuntimeError("Claude CLI not found. Install it (npm i -g @anthropic-ai/claude-code), "
@@ -149,14 +151,14 @@ async def run(session, client_id, text, provider, model):
         stdin_text = text if resume else prompt.history_preamble_before(session) + text
         mapper = ClaudeEventMapper(session)
         code, err = await cli_common.run_process(
-            build_argv(prefix, mcp_path, sys_path, model, resume), workspace, env, stdin_text,
+            build_argv(prefix, mcp_path, sys_path, model, resume, effort), workspace, env, stdin_text,
             mapper.feed)
         if code != 0 and resume and mapper.result is None:
             # The CLI lost this conversation (history cleared, other machine): start fresh.
             session.cli.pop("claude_cli", None)
             mapper = ClaudeEventMapper(session)
             code, err = await cli_common.run_process(
-                build_argv(prefix, mcp_path, sys_path, model, None), workspace, env,
+                build_argv(prefix, mcp_path, sys_path, model, None, effort), workspace, env,
                 prompt.history_preamble_before(session) + text, mapper.feed)
         if code != 0 and mapper.result is None:
             raise RuntimeError(f"claude exited with code {code}. {err.strip()[-600:]}")

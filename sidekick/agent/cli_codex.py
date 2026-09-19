@@ -80,7 +80,7 @@ def _toml(value):
     return json.dumps(value)  # JSON strings/numbers are valid TOML values
 
 
-def build_argv(prefix, workspace, mcp_url, model=None, resume=None, web_search=True):
+def build_argv(prefix, workspace, mcp_url, model=None, resume=None, web_search=True, effort=None):
     argv = list(prefix) + [
         "exec", "--json", "--skip-git-repo-check",
         "--ignore-user-config",  # keeps the login, drops the user's own MCP servers/profiles
@@ -96,12 +96,14 @@ def build_argv(prefix, workspace, mcp_url, model=None, resume=None, web_search=T
         argv += ["-c", "web_search=" + _toml("live")]
     if model:
         argv += ["-m", model]
+    if effort:  # the levels a model accepts are in ~/.codex/models_cache.json (brain_options.py)
+        argv += ["-c", "model_reasoning_effort=" + _toml(effort)]
     if resume:
         argv += ["resume", resume]
     return argv + ["-"]  # prompt comes from stdin
 
 
-async def run(session, client_id, text, provider, model):
+async def run(session, client_id, text, provider, model, effort=None):
     prefix = cli_common.resolve("codex", provider.get("cli_path"))
     if not prefix:
         raise RuntimeError("Codex CLI not found. Install it (npm i -g @openai/codex), run `codex` "
@@ -116,14 +118,14 @@ async def run(session, client_id, text, provider, model):
         stdin_text = text if resume else prompt.history_preamble_before(session) + text
         mapper = CodexEventMapper(session)
         code, err = await cli_common.run_process(
-            build_argv(prefix, workspace, mcp_url, model, resume), workspace, env, stdin_text,
+            build_argv(prefix, workspace, mcp_url, model, resume, effort=effort), workspace, env, stdin_text,
             mapper.feed)
         if resume and mapper.usage_raw is None and (code != 0 or mapper.failed):
             # Thread no longer exists for this login: start a new one with the chat replayed.
             session.cli.pop("codex_cli", None)
             mapper = CodexEventMapper(session)
             code, err = await cli_common.run_process(
-                build_argv(prefix, workspace, mcp_url, model, None), workspace, env,
+                build_argv(prefix, workspace, mcp_url, model, None, effort=effort), workspace, env,
                 prompt.history_preamble_before(session) + text, mapper.feed)
         if mapper.failed:
             raise RuntimeError(mapper.failed)

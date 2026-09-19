@@ -59,6 +59,7 @@ Other guard rails:
 ## Tips
 
 - Say what you want in plain words: *"build an SDXL text-to-image workflow with a 2x upscale, group it by stage"*, *"why is this node red?"*, *"tidy this group"*, *"set cfg to 5 and the scheduler to karras on both samplers"*, *"run it and tell me what failed"*.
+- Next to **Send**: the brain, its **model** (the list comes from the brain itself; *Other…* takes any id) and the **effort** — how long the model thinks before it acts. Higher effort is slower and costs more; *Low* is fine for small edits, raise it for big builds or debugging. Both are remembered per brain.
 - **⧉** in the panel header pops the chat out into a floating window you can drag and resize; **⇤** docks it back. There is also a command: *Sidekick: floating window on/off*.
 - **☰** lists your chats (rename with ✎). Chats are kept in `ComfyUI/user/__sidekick/sessions/`; screenshots are never written to disk.
 - A yellow banner means Sidekick was updated on disk: restart ComfyUI so the AI sees the new tools.

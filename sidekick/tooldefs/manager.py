@@ -75,7 +75,7 @@ async def _restart(ctx, a):
     if not note:
         raise ToolError("note is required: what you will do after the restart (you lose your working memory of this turn).")
     provider_id = getattr(ctx.session, "provider_id", None)
-    restart.book(ctx.session, note, provider_id, getattr(ctx.session, "model", None))
+    restart.book(ctx.session, note, provider_id, getattr(ctx.session, "model", None), getattr(ctx.session, "effort", None))
     return ("Restart booked. ComfyUI restarts as soon as this reply ends, and you will be called again automatically "
             "with your note. END YOUR TURN NOW: answer with one short sentence telling the user that ComfyUI is "
             "restarting, and call no more tools.")

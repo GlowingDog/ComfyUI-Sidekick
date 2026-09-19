@@ -170,7 +170,10 @@ class ProviderHTTPError(RuntimeError):
         self.status = status
 
 
-async def run(session, client_id, text, provider, model, cfg):
+_no_effort = set()  # (base_url, model) pairs that rejected reasoning_effort in this process
+
+
+async def run(session, client_id, text, provider, model, cfg, effort=None):
     base_url = str(provider.get("base_url") or "").rstrip("/")
     if not base_url:
         raise RuntimeError(f"Provider '{provider.get('name')}' has no base URL. Open Sidekick settings.")
@@ -215,6 +218,8 @@ async def run(session, client_id, text, provider, model, cfg):
                         trim_messages(session.messages)}
                 if send_usage_option:
                     body["stream_options"] = {"include_usage": True}
+                if effort and vision_key not in _no_effort:
+                    body["reasoning_effort"] = effort  # OpenAI's name; OpenRouter and most gateways map it
                 return body
             try:
                 await _stream(http, url, headers, make_body(), acc)
@@ -222,6 +227,9 @@ async def run(session, client_id, text, provider, model, cfg):
                 dropped_pixels = False
                 if e.status == 400 and send_usage_option and "stream_options" in str(e):
                     send_usage_option = False
+                elif e.status in (400, 422) and effort and vision_key not in _no_effort and "reasoning" in str(e).lower():
+                    _no_effort.add(vision_key)  # this model has no effort dial: carry on without it
+                    session.add_item("notice", text=f"{model} does not take an effort setting; continuing without it.")
                 elif e.status in (400, 404, 415, 422) and any(has_images(m) for m in session.messages):
                     # Probably a text-only model (e.g. DeepSeek): drop the pixels and try again.
                     dropped_pixels = True

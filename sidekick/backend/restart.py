@@ -23,9 +23,9 @@ RESUME_TEXT = (
     "reload the browser tab (F5) and wait for them.")
 
 
-def book(session, note, provider_id, model):
+def book(session, note, provider_id, model, effort=None):
     session.continuation = {"note": " ".join(str(note or "").split())[:1500] or "tell the user the restart is done",
-                            "provider": provider_id, "model": model, "ts": time.time()}
+                            "provider": provider_id, "model": model, "effort": effort, "ts": time.time()}
     session.restart_requested = True
     session.save()
 

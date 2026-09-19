@@ -66,7 +66,7 @@ class Session:
         self.task = None
         self.allowed_tools = set()  # "allow for session" grants
         self.provider_kind = None
-        self.provider_id = self.model = None  # what this turn runs on (restart_comfyui resumes with it)
+        self.provider_id = self.model = self.effort = None  # what this turn runs on (restart_comfyui resumes with it)
         self.restart_requested = False
 
     # ---- state ----

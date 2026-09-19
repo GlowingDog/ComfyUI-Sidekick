@@ -228,7 +228,7 @@ class RestartTests(unittest.TestCase):
             async def fake_perform(stop_turns):
                 performed.append(True)
 
-            async def fake_provider(session, client_id, text, provider, model, cfg):
+            async def fake_provider(session, client_id, text, provider, model, cfg, effort=None):
                 ctx = registry.ToolContext(session, client_id, {"permission_mode": "auto"})
                 ok, text1 = await registry.dispatch(ctx, "restart_comfyui", {"note": "then add the Seed node"})
                 self.assertTrue(ok)
@@ -247,14 +247,14 @@ class RestartTests(unittest.TestCase):
             restart.perform, runner._run_provider = fake_perform, fake_provider
             try:
                 s = sessions.Session()
-                await runner.run_turn(s, "c1", "install rgthree", "claude_cli", "haiku")
+                await runner.run_turn(s, "c1", "install rgthree", "claude_cli", "haiku", effort="High")
                 await asyncio.sleep(0.01)
                 self.assertEqual(performed, [True])
-                self.assertEqual((s.continuation["note"], s.continuation["provider"], s.continuation["model"]),
-                                 ("then add the Seed node", "claude_cli", "haiku"))
+                self.assertEqual((s.continuation["note"], s.continuation["provider"], s.continuation["model"], s.continuation["effort"]),
+                                 ("then add the Seed node", "claude_cli", "haiku", "high"), "the resumed turn thinks as hard as this one")
                 self.assertIn("Restarting ComfyUI", s.items[-1]["text"])
 
-                async def stopped(session, client_id, text, provider, model, cfg):  # user presses Stop after the booking
+                async def stopped(session, client_id, text, provider, model, cfg, effort=None):  # user presses Stop after the booking
                     restart.book(session, "x", "claude_cli", None)
                     raise asyncio.CancelledError()
                 runner._run_provider = stopped

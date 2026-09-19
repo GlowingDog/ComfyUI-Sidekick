@@ -80,6 +80,44 @@ export async function run() {
     [...root.querySelectorAll("button")].find((b) => b.textContent.includes("Close"))?.click();
   });
 
+  await guard("pickers", async () => {
+    await sleep(400); // the model list arrives from the server
+    const row = root.querySelector(".composer .row");
+    check("brain, model and effort are pickers, not a text box", row.querySelectorAll("select").length === 3 && !row.querySelector("input"));
+    const model = row.querySelector("select.model");
+    check("model picker: Default first, Other… last", model.options[0].value === "" && model.options[model.options.length - 1].textContent === "Other…", [...model.options].map((o) => o.textContent).join(" | "));
+    const effort = row.querySelector("select.effort");
+    check("effort picker: Default first, then the brain's levels (or hidden when it has none)", effort.options[0].value === "" && (effort.hidden || effort.options.length > 1), [...effort.options].map((o) => o.textContent).join(" | "));
+    model.value = "__other__";
+    model.dispatchEvent(new Event("change"));
+    await sleep(40);
+    const box = row.querySelector("input.model");
+    check("Other… opens a box for a model id", !!box);
+    box?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await sleep(40);
+    check("Escape brings the picker back unchanged", !!row.querySelector("select.model") && !row.querySelector("input.model"));
+
+    // model + effort are remembered per brain (and a brain switch must not wipe them)
+    const brain = row.querySelector("select");
+    const before = { provider: client.state.provider, model: client.state.model, effort: client.state.effort };
+    const other = [...brain.options].map((o) => o.value).find((v) => v !== "claude_cli");
+    const pick = async (sel, value) => { sel.value = value; sel.dispatchEvent(new Event("change")); await sleep(450); };
+    if ([...brain.options].some((o) => o.value === "claude_cli") && other) {
+      await pick(brain, "claude_cli");
+      const keep = { model: client.state.model, effort: client.state.effort };
+      await pick(row.querySelector("select.model"), "opus");
+      await pick(row.querySelector("select.effort"), "high");
+      await pick(brain, other);
+      await pick(brain, "claude_cli");
+      check("switching brains brings back that brain's model and effort", client.state.model === "opus" && client.state.effort === "high" && row.querySelector("select.effort").value === "high", `${client.state.model}/${client.state.effort}`);
+      client.setModel(keep.model);
+      client.setEffort(keep.effort);
+    }
+    client.setProvider(before.provider);
+    client.setModel(before.model);
+    client.setEffort(before.effort);
+  });
+
   await guard("keys", async () => {
     let leaked = 0;
     const spy = () => { leaked++; };

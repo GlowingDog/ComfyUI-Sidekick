@@ -9,7 +9,7 @@ from aiohttp import web
 from server import PromptServer
 
 from . import VERSION, bridge, config, mcp_server, pending, registry, sessions, tooldefs
-from .agent import cli_common, loop_openai, runner
+from .agent import brain_options, cli_common, loop_openai, runner
 from .backend import downloads, restart
 
 log = logging.getLogger("sidekick")
@@ -103,6 +103,16 @@ async def provider_models(request):
         return _bad(str(e), 502)
 
 
+@routes.get("/sidekick/brain_options")
+async def brain_options_route(request):
+    """Models and effort levels the chosen brain offers (the two pickers next to Send)."""
+    cfg = config.load()
+    provider = config.get_provider(cfg, request.query.get("provider") or cfg.get("default_provider"))
+    if provider is None:
+        return _bad("unknown provider", 404)
+    return web.json_response(await brain_options.options(provider, refresh=bool(request.query.get("refresh"))))
+
+
 # ---------- chat ----------
 
 @routes.post("/sidekick/chat")
@@ -120,7 +130,7 @@ async def chat(request):
     if session.running:
         return _bad("This chat is still working. Stop it first.", 409)
     runner.start_turn(session, data["client_id"], str(data["text"]).strip(),
-                      data.get("provider"), data.get("model"))
+                      data.get("provider"), data.get("model"), effort=data.get("effort"))
     return web.json_response({"session_id": session.id}, status=202)
 
 
@@ -140,7 +150,7 @@ async def chat_resume(request):
         return _bad("CLI providers can only be used from the machine running ComfyUI.", 403)
     runner.start_turn(session, data["client_id"], restart.RESUME_TEXT.format(note=note["note"]),
                       note.get("provider"), note.get("model"),
-                      shown=f"↻ ComfyUI restarted. Continuing: {note['note']}")
+                      shown=f"↻ ComfyUI restarted. Continuing: {note['note']}", effort=note.get("effort"))
     return web.json_response({"resumed": True}, status=202)
 
 

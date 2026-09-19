@@ -106,6 +106,41 @@ class LoopTests(unittest.TestCase):
         self.assertEqual(session.items[1]["reasoning"], "thinking…")
         self.assertEqual(usage, {"input_tokens": 250, "output_tokens": 16})
 
+    def test_effort_is_sent_and_dropped_for_models_without_the_dial(self):
+        bodies = []
+
+        async def completions(request):
+            body = await request.json()
+            bodies.append(body)
+            if body["model"] == "plain-model" and "reasoning_effort" in body:
+                return web.json_response({"error": {"message": "Unrecognized request argument: reasoning_effort"}}, status=400)
+            return web.Response(text=TURN_2, content_type="text/event-stream")
+
+        async def go():
+            registry._tools.clear()
+            app = web.Application()
+            app.router.add_post("/v1/chat/completions", completions)
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, "127.0.0.1", 0)
+            await site.start()
+            provider = {"name": "mock", "base_url": f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/v1"}
+            cfg = {"permission_mode": "confirm"}
+            try:
+                await loop_openai.run(sessions.Session(), "c", "hi", provider, "thinker", cfg, "high")
+                await loop_openai.run(sessions.Session(), "c", "hi", provider, "thinker", cfg)
+                s = sessions.Session()
+                await loop_openai.run(s, "c", "hi", provider, "plain-model", cfg, "low")
+                await loop_openai.run(sessions.Session(), "c", "again", provider, "plain-model", cfg, "low")
+                return s
+            finally:
+                await runner.cleanup()
+
+        s = asyncio.new_event_loop().run_until_complete(go())
+        self.assertEqual([b.get("reasoning_effort") for b in bodies], ["high", None, "low", None, None])
+        self.assertTrue(any(i["kind"] == "notice" and "effort" in i["text"] for i in s.items), "the user is told once")
+        self.assertEqual(s.items[-1]["text"], "The value is 42.")
+
 
 if __name__ == "__main__":
     unittest.main()

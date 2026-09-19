@@ -9,15 +9,22 @@ from . import cli_claude, cli_codex, loop_openai
 log = logging.getLogger("sidekick")
 
 
-async def _run_provider(session, client_id, text, provider, model, cfg):
+async def _run_provider(session, client_id, text, provider, model, cfg, effort=None):
     kind = provider.get("kind")
     if kind == "claude_cli":
-        return await cli_claude.run(session, client_id, text, provider, model)
+        return await cli_claude.run(session, client_id, text, provider, model, effort)
     if kind == "codex_cli":
-        return await cli_codex.run(session, client_id, text, provider, model)
+        return await cli_codex.run(session, client_id, text, provider, model, effort)
     if kind == "openai":
-        return await loop_openai.run(session, client_id, text, provider, model, cfg)
+        return await loop_openai.run(session, client_id, text, provider, model, cfg, effort)
     raise RuntimeError(f"Provider kind '{kind}' is not available yet.")
+
+
+def clean_effort(value):
+    """A word such as low / medium / high / xhigh / max / ultra, or None. It ends up in a CLI
+    argument and a request body, so nothing but a short lowercase word gets through."""
+    word = str(value or "").strip().lower()
+    return word if word.isalpha() and len(word) <= 12 and word != "default" else None
 
 
 async def stop_all(grace=8.0):
@@ -29,14 +36,15 @@ async def stop_all(grace=8.0):
         await asyncio.wait(tasks, timeout=grace)
 
 
-async def run_turn(session, client_id, text, provider_id, model, shown=None):
+async def run_turn(session, client_id, text, provider_id, model, shown=None, effort=None):
     """`shown`: what the chat displays instead of `text` (automatic messages such as the
     resume after a restart, which carry instructions the user does not need to read)."""
     cfg = config.load()
     provider = config.get_provider(cfg, provider_id or cfg.get("default_provider"))
     usage = None
+    effort = clean_effort(effort)
     session.client_id = client_id
-    session.provider_id, session.model = provider_id, model
+    session.provider_id, session.model, session.effort = provider_id, model, effort
     if not any(it["kind"] == "user" for it in session.items):
         session.title = " ".join(text.split())[:60] or "New chat"
     if shown:
@@ -49,7 +57,7 @@ async def run_turn(session, client_id, text, provider_id, model, shown=None):
             raise RuntimeError("No provider configured. Open Sidekick settings.")
         session.provider_kind = provider.get("kind")
         usage = await _run_provider(session, client_id, text, provider,
-                                    model or provider.get("model") or None, cfg)
+                                    model or provider.get("model") or None, cfg, effort)
     except asyncio.CancelledError:
         if session.restart_requested:  # the user pressed Stop: that cancels the booked restart too
             session.restart_requested, session.continuation = False, None
@@ -72,7 +80,7 @@ async def run_turn(session, client_id, text, provider_id, model, shown=None):
             asyncio.get_running_loop().create_task(restart.perform(stop_all))
 
 
-def start_turn(session, client_id, text, provider_id, model, shown=None):
+def start_turn(session, client_id, text, provider_id, model, shown=None, effort=None):
     session.task = asyncio.get_running_loop().create_task(
-        run_turn(session, client_id, text, provider_id, model, shown))
+        run_turn(session, client_id, text, provider_id, model, shown, effort))
     return session.task

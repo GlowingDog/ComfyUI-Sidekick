@@ -18,7 +18,7 @@ export async function postJSON(path, body, method = "POST") {
   return data;
 }
 
-const LS = { session: "sidekick.session", provider: "sidekick.provider", model: "sidekick.model" };
+const LS = { session: "sidekick.session", provider: "sidekick.provider" };
 const ls = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { v === null || v === undefined ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* private mode */ } },
@@ -30,7 +30,7 @@ export const state = {
   sessions: [], config: null, status: null,
   gesture: null, // pending requestGesture(), drawn by the panel
   mounted: 0, // how many panels are on screen
-  provider: ls.get(LS.provider), model: ls.get(LS.model) ?? "",
+  provider: ls.get(LS.provider), model: "", effort: "", // model/effort: filled per brain by setProvider()
 };
 
 const listeners = new Set();
@@ -106,9 +106,39 @@ export function showItemsForTest(items) {
   notify({ type: "full" });
 }
 
+// Model and effort are remembered per brain: switching brains brings back what you used there.
+const perBrain = (what, provider) => ls.get(`sidekick.${what}.${provider}`) ?? "";
+
 export function setProvider(provider, model) {
-  state.provider = provider; state.model = model ?? "";
-  ls.set(LS.provider, provider); ls.set(LS.model, state.model);
+  state.provider = provider;
+  ls.set(LS.provider, provider);
+  state.model = perBrain("model", provider);
+  state.effort = perBrain("effort", provider);
+  if (model !== undefined) setModel(model);
+}
+
+export function setModel(model) {
+  state.model = model ?? "";
+  ls.set(`sidekick.model.${state.provider}`, state.model || null);
+}
+
+export function setEffort(effort) {
+  state.effort = effort ?? "";
+  ls.set(`sidekick.effort.${state.provider}`, state.effort || null);
+}
+
+const optionsCache = new Map();
+/** {models: [{id, label, efforts?, default_effort?}], efforts: [...], note?} for the two pickers. */
+export async function brainOptions(provider, refresh = false) {
+  if (!refresh && optionsCache.has(provider)) return optionsCache.get(provider);
+  let value;
+  try {
+    value = await getJSON(`/sidekick/brain_options?provider=${encodeURIComponent(provider)}${refresh ? "&refresh=1" : ""}`);
+  } catch (e) {
+    return { models: [], efforts: [], note: e.message }; // an old server (restart pending): pickers fall back to "Default"
+  }
+  if (!value.note) optionsCache.set(provider, value);
+  return value;
 }
 
 /**
@@ -155,7 +185,7 @@ export async function send(text) {
   state.running = true;
   notify({ type: "meta" });
   try {
-    await postJSON("/sidekick/chat", { session_id: state.sessionId, client_id: api.clientId, text, provider: state.provider, model: state.model || null });
+    await postJSON("/sidekick/chat", { session_id: state.sessionId, client_id: api.clientId, text, provider: state.provider, model: state.model || null, effort: state.effort || null });
   } catch (e) {
     state.running = false;
     state.items.push({ id: "local-" + newId(), kind: "error", text: e.message });
@@ -169,11 +199,14 @@ export const answer = (request_id, payload) => postJSON("/sidekick/answer", { re
 export async function loadConfig() {
   [state.config, state.status] = await Promise.all([getJSON("/sidekick/config"), getJSON("/sidekick/status")]);
   if (!state.provider || !state.config.providers.some((p) => p.id === state.provider)) state.provider = state.config.default_provider;
+  setProvider(state.provider); // loads this brain's remembered model and effort
+  optionsCache.clear(); // keys or base URLs may have changed
   notify({ type: "config" });
 }
 
 export async function saveConfig(patch) {
   state.config = await postJSON("/sidekick/config", patch);
+  optionsCache.clear(); // a new key or base URL means a different model list
   notify({ type: "config" });
 }
 
