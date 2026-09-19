@@ -1,8 +1,11 @@
-// Read tools: compact text outline of the canvas + full detail of one node.
-import { app, graph, allNodes, allGroups, getLink, nodeById, nodeRect, round } from "./graphCtx.js";
+// Read tools: budgeted text outline of the canvas, node detail, link tracing.
+import { app, ToolError, graph, allNodes, allGroups, getLink, nodeById, nodeRect, round } from "./graphCtx.js";
 
 const MODES = { 0: "active", 2: "muted", 4: "bypassed" };
 const MAX_WIDGET_CHARS = 140;
+// Whole-graph outlines must fit the backend cap (48k) with room to spare. A 123-node graph is
+// ~45k chars at full detail: blind truncation there cost one real session ~40 extra tool calls.
+const BUDGET = 40000;
 
 export function comboValues(widget, node) {
   const v = widget.options?.values;
@@ -42,18 +45,12 @@ export function slotInfo(node) {
   return { inputs, outputs };
 }
 
-function inputName(nodeId, slot) {
-  const n = graph().getNodeById(nodeId);
-  return n?.inputs?.[slot]?.name ?? slot;
-}
+const inputName = (nodeId, slot) => graph().getNodeById(nodeId)?.inputs?.[slot]?.name ?? slot;
+const outputName = (nodeId, slot) => graph().getNodeById(nodeId)?.outputs?.[slot]?.name ?? slot;
+const groupBounds = (g) => g._bounding ?? [...g.pos, ...g.size];
 
-function outputName(nodeId, slot) {
-  const n = graph().getNodeById(nodeId);
-  return n?.outputs?.[slot]?.name ?? slot;
-}
-
-function groupMembers(group) {
-  const [gx, gy, gw, gh] = group._bounding ?? [...group.pos, ...group.size];
+export function groupMembers(group) {
+  const [gx, gy, gw, gh] = groupBounds(group);
   return allNodes().filter((n) => {
     const [x, y, w, h] = nodeRect(n);
     const cx = x + w / 2, cy = y + h / 2;
@@ -61,58 +58,136 @@ function groupMembers(group) {
   });
 }
 
-export function getWorkflow({ node_ids, include_widgets = true } = {}) {
-  const want = Array.isArray(node_ids) && node_ids.length ? new Set(node_ids.map(String)) : null;
-  const nodes = allNodes().filter((n) => !want || want.has(String(n.id)));
+function findGroup(ref) {
+  const groups = allGroups();
+  const byId = groups.find((g) => String(g.id) === String(ref));
+  if (byId) return byId;
+  const want = String(ref).toLowerCase();
+  const hits = groups.filter((g) => String(g.title).toLowerCase().includes(want));
+  if (hits.length === 1) return hits[0];
+  const list = groups.map((g) => `#${g.id} ${JSON.stringify(g.title)}`).join(", ") || "(none)";
+  throw new ToolError(`${hits.length ? "Several groups match" : "No group matches"} "${ref}". Groups: ${list}`);
+}
+
+const titleOf = (n) => (n.title && n.title !== n.constructor?.title && n.title !== n.type ? JSON.stringify(n.title) : "");
+
+function flagsOf(n) {
+  const flags = [];
+  if (MODES[n.mode] && n.mode !== 0) flags.push(MODES[n.mode]);
+  if (n.flags?.collapsed) flags.push("collapsed");
+  if (n.flags?.pinned || n.pinned) flags.push("pinned");
+  return flags.join(",");
+}
+
+function linkText(n) {
+  const { inputs, outputs } = slotInfo(n);
+  const ins = inputs.filter((i) => i.linked).map((i) => `${i.name}<-${i.from.node}.${outputName(i.from.node, i.from.output)}`);
+  const outs = outputs.filter((o) => o.to.length).map((o) => `${o.name}->${o.to.map((t) => `${t.node}.${inputName(t.node, t.input)}`).join(",")}`);
+  return { inputs, outputs, ins, outs };
+}
+
+function renderFull(nodes, includeWidgets) {
+  const lines = ["nodes (id|type|title|x,y|WxH|flags):"];
+  for (const n of nodes) {
+    lines.push(` ${n.id}|${n.type}|${titleOf(n)}|${round(n.pos[0])},${round(n.pos[1])}|${round(n.size[0])}x${round(n.size[1])}|${flagsOf(n)}`);
+    if (includeWidgets) {
+      const ws = visibleWidgets(n).map((w) => `${w.name}=${fmtValue(w.value)}`);
+      if (ws.length) lines.push(`   widgets: ${ws.join(", ")}`);
+    }
+    const { inputs, outputs, ins } = linkText(n);
+    const open = inputs.filter((i) => !i.linked && !i.widget).map((i) => `${i.name}(${i.type})`);
+    if (ins.length || open.length) lines.push(`   in: ${ins.join("; ") || "-"}${open.length ? ` | open: ${open.join(", ")}` : ""}`);
+    const outs = outputs.map((o) => `${o.name}(${o.type})${o.to.length ? "->" + o.to.map((t) => `${t.node}.${inputName(t.node, t.input)}`).join(",") : ""}`);
+    if (outs.length) lines.push(`   out: ${outs.join("; ")}`);
+  }
+  return lines;
+}
+
+function renderOutline(nodes) {
+  const lines = ["nodes (id|type|title|flags | in: linked inputs | out: linked outputs):"];
+  for (const n of nodes) {
+    const { ins, outs } = linkText(n);
+    lines.push(` ${n.id}|${n.type}|${titleOf(n)}|${flagsOf(n)}${ins.length ? ` | in: ${ins.join("; ")}` : ""}${outs.length ? ` | out: ${outs.join("; ")}` : ""}`);
+  }
+  return lines;
+}
+
+function renderIndex(nodes) {
+  const groups = [...allGroups()].sort((a, b) => groupBounds(a)[2] * groupBounds(a)[3] - groupBounds(b)[2] * groupBounds(b)[3]);
+  const owner = new Map(); // node -> smallest group containing it
+  for (const g of groups) for (const n of groupMembers(g)) if (!owner.has(n)) owner.set(n, g);
+  const short = (n) => `${n.id} ${n.type}${titleOf(n) ? " " + titleOf(n) : ""}${flagsOf(n) ? " [" + flagsOf(n) + "]" : ""}`;
+  const lines = ["nodes per group (id type title):"];
+  for (const g of allGroups()) {
+    const mine = nodes.filter((n) => owner.get(n) === g);
+    if (mine.length) lines.push(` #${g.id} ${JSON.stringify(g.title)}: ${mine.map(short).join("; ")}`);
+  }
+  const loose = nodes.filter((n) => !owner.has(n));
+  if (loose.length) lines.push(` (no group): ${loose.map(short).join("; ")}`);
+  return lines;
+}
+
+export function getWorkflow({ node_ids, group, query, detail = "auto", include_widgets = true } = {}) {
+  const everything = allNodes();
+  let nodes = everything;
+  const filters = [];
+  if (Array.isArray(node_ids) && node_ids.length) {
+    const want = new Set(node_ids.map(String));
+    nodes = nodes.filter((n) => want.has(String(n.id)));
+    filters.push(`node_ids (${nodes.length} found)`);
+  }
+  if (group !== undefined && group !== null && group !== "") {
+    const g = findGroup(group);
+    const members = new Set(groupMembers(g));
+    nodes = nodes.filter((n) => members.has(n));
+    filters.push(`group #${g.id} ${JSON.stringify(g.title)}`);
+  }
+  if (query) {
+    const q = String(query).toLowerCase();
+    nodes = nodes.filter((n) => `${n.title ?? ""} ${n.type}`.toLowerCase().includes(q));
+    filters.push(`query ${JSON.stringify(query)}`);
+  }
+
   const groups = allGroups();
   const wf = app.extensionManager?.workflow?.activeWorkflow;
   const inSubgraph = app.rootGraph && graph() !== app.rootGraph;
-
   let linkCount = 0;
-  for (const n of allNodes()) for (const i of n.inputs ?? []) if (i.link !== null && i.link !== undefined) linkCount++;
+  for (const n of everything) for (const i of n.inputs ?? []) if (i.link !== null && i.link !== undefined) linkCount++;
 
-  const lines = [];
   let head = `workflow ${JSON.stringify(wf?.filename ?? wf?.path ?? "unsaved")}${wf?.isModified ? " (modified)" : ""}` +
-    ` | graph: ${inSubgraph ? "subgraph (not root)" : "root"} | ${allNodes().length} nodes, ${linkCount} links, ${groups.length} groups`;
-  if (allNodes().length) {
-    const rects = allNodes().map(nodeRect);
+    ` | graph: ${inSubgraph ? "subgraph (not root)" : "root"} | ${everything.length} nodes, ${linkCount} links, ${groups.length} groups`;
+  if (everything.length) {
+    const rects = everything.map(nodeRect);
     const x0 = Math.min(...rects.map((r) => r[0])), y0 = Math.min(...rects.map((r) => r[1]));
     const x1 = Math.max(...rects.map((r) => r[0] + r[2])), y1 = Math.max(...rects.map((r) => r[1] + r[3]));
     head += ` | bounds ${round(x0)},${round(y0)}..${round(x1)},${round(y1)}`;
   }
-  lines.push(head);
-  if (!allNodes().length) lines.push("(canvas is empty)");
 
-  if (groups.length && !want) {
-    lines.push("groups (#id \"title\" [x,y,w,h] nodes):");
+  const groupLines = [];
+  if (groups.length && !filters.length) {
+    groupLines.push("groups (#id \"title\" [x,y,w,h] nodes):");
     for (const g of groups) {
-      const b = (g._bounding ?? [...g.pos, ...g.size]).map(round);
-      lines.push(` #${g.id} ${JSON.stringify(g.title)} [${b.join(",")}]${g.color ? " " + g.color : ""} nodes: ${groupMembers(g).map((n) => n.id).join(",") || "-"}`);
+      groupLines.push(` #${g.id} ${JSON.stringify(g.title)} [${groupBounds(g).map(round).join(",")}]${g.color ? " " + g.color : ""} nodes: ${groupMembers(g).map((n) => n.id).join(",") || "-"}`);
     }
   }
 
-  if (nodes.length) lines.push("nodes (id|type|title|x,y|WxH|flags):");
-  for (const n of nodes) {
-    const flags = [];
-    if (MODES[n.mode] && n.mode !== 0) flags.push(MODES[n.mode]);
-    if (n.flags?.collapsed) flags.push("collapsed");
-    if (n.flags?.pinned || n.pinned) flags.push("pinned");
-    const title = n.title && n.title !== n.constructor?.title && n.title !== n.type ? JSON.stringify(n.title) : "";
-    lines.push(` ${n.id}|${n.type}|${title}|${round(n.pos[0])},${round(n.pos[1])}|${round(n.size[0])}x${round(n.size[1])}|${flags.join(",")}`);
-    if (include_widgets) {
-      const ws = visibleWidgets(n).map((w) => `${w.name}=${fmtValue(w.value)}`);
-      if (ws.length) lines.push(`   widgets: ${ws.join(", ")}`);
-    }
-    const { inputs, outputs } = slotInfo(n);
-    const linkedIn = inputs.filter((i) => i.linked).map((i) => `${i.name}<-${i.from.node}.${outputName(i.from.node, i.from.output)}`);
-    const openIn = inputs.filter((i) => !i.linked && !i.widget).map((i) => `${i.name}(${i.type})`);
-    if (linkedIn.length || openIn.length) {
-      lines.push(`   in: ${linkedIn.join("; ") || "-"}${openIn.length ? ` | open: ${openIn.join(", ")}` : ""}`);
-    }
-    const outs = outputs.map((o) => `${o.name}(${o.type})${o.to.length ? "->" + o.to.map((t) => `${t.node}.${inputName(t.node, t.input)}`).join(",") : ""}`);
-    if (outs.length) lines.push(`   out: ${outs.join("; ")}`);
+  const renderers = { full: () => renderFull(nodes, include_widgets), outline: () => renderOutline(nodes), index: () => renderIndex(nodes) };
+  const order = detail in renderers ? [detail] : ["full", "outline", "index"];
+  let level = order[0], body = [];
+  for (const candidate of order) {
+    level = candidate;
+    body = nodes.length ? renderers[candidate]() : [];
+    if (body.join("\n").length + groupLines.join("\n").length <= BUDGET) break;
   }
-  return lines.join("\n");
+
+  let detailLine = `showing ${nodes.length} of ${everything.length} nodes${filters.length ? ` (filter: ${filters.join(", ")})` : ""} | detail: ${level}`;
+  if (order.length > 1 && level !== "full") {
+    detailLine += ` (reduced from full so the whole graph fits; for positions and widget values call get_workflow with group=, query= or node_ids=, or get_node with node_ids)`;
+  }
+  const lines = [head, detailLine];
+  if (!everything.length) lines.push("(canvas is empty)");
+  else if (!nodes.length) lines.push("(no node matches the filter)");
+  return [...lines, ...groupLines, ...body].join("\n");
 }
 
 export function describeNode(node, { brief = false } = {}) {
@@ -147,6 +222,47 @@ export function describeNode(node, { brief = false } = {}) {
   return out;
 }
 
-export function getNode({ node_id }) {
+export function getNode({ node_id, node_ids }) {
+  if (Array.isArray(node_ids) && node_ids.length) {
+    if (node_ids.length > 25) throw new ToolError("At most 25 node_ids per call.");
+    // One bad id must not waste the whole batch.
+    return node_ids.map((id) => { try { return describeNode(nodeById(id)); } catch (e) { return { id, error: e.message.split(".")[0] }; } });
+  }
+  if (node_id === undefined || node_id === null) throw new ToolError("Give node_id or node_ids.");
   return describeNode(nodeById(node_id));
+}
+
+export function traceConnections({ node_id, direction = "both", depth = 6 }) {
+  const start = nodeById(node_id);
+  const maxDepth = Math.max(1, Math.min(Number(depth) || 6, 30));
+  const LIMIT = 150;
+  const walk = (dir) => {
+    const seen = new Map([[String(start.id), 0]]);
+    let frontier = [start];
+    const rows = [];
+    for (let hop = 1; hop <= maxDepth && frontier.length && rows.length < LIMIT; hop++) {
+      const next = [];
+      for (const n of frontier) {
+        const { inputs, outputs } = slotInfo(n);
+        const edges = dir === "upstream"
+          ? inputs.filter((i) => i.from).map((i) => ({ id: i.from.node, via: `${outputName(i.from.node, i.from.output)} -> ${n.id}.${i.name}` }))
+          : outputs.flatMap((o) => o.to.map((t) => ({ id: t.node, via: `${n.id}.${o.name} -> ${inputName(t.node, t.input)}` })));
+        for (const e of edges) {
+          if (seen.has(String(e.id))) continue;
+          const m = graph().getNodeById(e.id);
+          if (!m) continue;
+          seen.set(String(e.id), hop);
+          rows.push(` ${hop}|${m.id}|${m.type}|${titleOf(m)}|${flagsOf(m)}|${e.via}`);
+          next.push(m);
+        }
+      }
+      frontier = next;
+    }
+    return rows;
+  };
+  const lines = [`trace from ${start.id} (${start.type}${titleOf(start) ? " " + titleOf(start) : ""}), max ${maxDepth} hops. Rows: hop|id|type|title|flags|via`];
+  if (direction !== "downstream") { const up = walk("upstream"); lines.push(`upstream (feeds it): ${up.length || "none"}`, ...up); }
+  if (direction !== "upstream") { const down = walk("downstream"); lines.push(`downstream (fed by it): ${down.length || "none"}`, ...down); }
+  lines.push("Note: only real links are followed; wireless/virtual routing nodes (e.g. Remote IO, Set/Get, Anything Everywhere) connect nodes without links.");
+  return lines.join("\n");
 }

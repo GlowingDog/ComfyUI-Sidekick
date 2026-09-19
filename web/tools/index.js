@@ -1,12 +1,18 @@
 // Browser-side tool table. Names and argument shapes mirror sidekick/tooldefs/*.py.
 import { withUndo } from "./graphCtx.js";
-import { getNode, getWorkflow } from "./read.js";
-import { addNode, connectNodes, createGroup, disconnect, editGraph, removeGroup, removeNodes, setWidgetValues, updateGroup, updateNode } from "./edit.js";
+import { getNode, getWorkflow, traceConnections } from "./read.js";
+import { addNode, arrangeNodes, connectNodes, createGroup, disconnect, editGraph, removeGroup, removeNodes, setWidgetValues, updateGroup, updateNode } from "./edit.js";
+import { listCommands, runCommand } from "./commands.js";
+import { workflowTabs } from "./workflow.js";
 
-// edit: true -> wrapped in ONE undo step
+// edit: true -> wrapped in ONE undo step of the active workflow.
+// run_command / workflow_tabs are deliberately NOT wrapped: they may switch tabs mid-call, and
+// closing the undo step then would capture the new tab's graph into the old tab's history.
+// ComfyUI's own commands do their own change tracking.
 const TOOLS = {
   get_workflow: { fn: getWorkflow },
   get_node: { fn: getNode },
+  trace_connections: { fn: traceConnections },
   add_node: { fn: addNode, edit: true },
   connect_nodes: { fn: connectNodes, edit: true },
   disconnect: { fn: disconnect, edit: true },
@@ -16,7 +22,11 @@ const TOOLS = {
   create_group: { fn: createGroup, edit: true },
   update_group: { fn: updateGroup, edit: true },
   remove_group: { fn: removeGroup, edit: true },
+  arrange_nodes: { fn: arrangeNodes, edit: true },
   edit_graph: { fn: editGraph, edit: true },
+  list_commands: { fn: listCommands },
+  run_command: { fn: runCommand },
+  workflow_tabs: { fn: workflowTabs },
 };
 
 export async function runTool(name, args) {

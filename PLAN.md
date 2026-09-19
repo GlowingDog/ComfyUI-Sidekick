@@ -28,10 +28,19 @@ Full approved plan: `C:\Users\PC\.claude\plans\i-would-like-to-compressed-finch.
   - Trick: `--strict-config` + `-m bogus-model` validates a config key without spending tokens (wrong key → instant error, right key → model 400).
 - [ ] Codex loads `~/.agents/skills` (~58k input tokens/turn, mostly cached). No working off-switch found: `--disable skills`, `skills.enabled`, `skills.include_host` are unknown; `skip_host_skill_discovery` is under-development and had no effect.
 
+## Driven by real use (2026-09-18) — done ahead of plan order
+The user's first two real sessions (API brain, 123-node workflow; session files in `user/__sidekick/sessions/`) **proved the OpenAI-compatible loop against a real provider** (streaming, 46 tool calls in one turn, ask_user card) and exposed three problems:
+- [x] `get_workflow` hit the 16k cap → the model made ~40 single `get_node` calls. Now: budgeted detail (`full` → `outline` → `index`, 40k budget, 48k cap via `Tool.max_chars`), filters `group` / `query` / `node_ids`, `get_node node_ids` (≤25, bad ids tolerated), new `trace_connections`. Verified live: 260 nodes → outline 20.6k chars, index 3.9k; group filter 13 nodes 4k with widgets.
+- [x] "open a new workflow tab" was refused. Now: `list_commands` / `run_command` (121 commands; per-call risk via `Tool.risk_fn` + regex allowlist in `tooldefs/ui.py`; "allow for this chat" is per command id, never the whole tool) and `workflow_tabs` (list/new/switch/list_saved/open/save/close). Tab switch replicates `workflowService.openWorkflow` (`load()` + `app.loadGraphData(state, true, true, wf)`); verified state survives a round trip. These two are **not** wrapped in `withUndo` (a tab switch mid-call would write the new tab's graph into the old tab's history).
+- [x] Nodes overflowed a group; model did coordinate math by hand. Now: `add_node group_id` (first free spot, group grows), `arrange_nodes` (row/column/grid from real sizes, `fit_group_id`, reports collisions, skips pinned), `update_group fit_to_contents`. Pure math in `web/tools/layoutMath.js` (node-tested).
+- [x] Bug found while testing: `remove_group remove_nodes` deleted the box but left the nodes (LiteGraph's `group._children` is stale right after programmatic moves). Now uses the same geometry test as `get_workflow` (`read.groupMembers`). Verified incl. undo/redo.
+- [x] `tests/py/test_tooldefs.py`: Python frontend tool names == `web/tools/index.js` table, no union types in schemas, < 45 tools, command risk, per-command grants, read-only mode.
+- [ ] Still unverified: `workflow_tabs` save/close/open/list_saved against real saved files (only list/new/switch ran live); new tools through a real LLM turn (needs ComfyUI restart — Python tool defs changed).
+
 ## P3 — Sophisticated editing + interaction
-- [ ] auto_layout (layered DAG, groups as super-nodes, reroutes, dry_run), Vue-nodes check of `setNodePos`
-- [ ] Node/canvas context menus (list/invoke with submenu paths), commands, settings
-- [ ] Workflow lifecycle (new/load/save/tabs/templates), queue_prompt, wait_for_execution, execution errors
+- [ ] auto_layout (layered DAG, groups as super-nodes, reroutes, dry_run), Vue-nodes check of `setNodePos` (`arrange_nodes` covers the simple cases already)
+- [ ] Node/canvas context menus (list/invoke with submenu paths), settings (commands: done)
+- [ ] load_workflow from JSON/template, queue_prompt with validation errors, wait_for_execution, execution errors (tabs + queue via `run_command`: done)
 - [ ] Subgraph-aware ids in outlines
 
 ## P4 — Manager, models, web, restart/resume

@@ -19,7 +19,18 @@ ADD_NODE = {
              "properties": {"node_id": NODE_REF,
                             "side": {"type": "string", "enum": ["right", "left", "below", "above"]}},
              "required": ["node_id"]},
+    "group_id": {"type": "integer", "description": "Place the node inside this group (first free "
+                 "spot); the group grows if needed. Instead of pos/near."},
     "widgets": {"type": "object", "description": "Widget values to set, e.g. {\"cfg\": 5, \"text\": \"a cat\"}."},
+}
+ARRANGE = {
+    "node_ids": {"type": "array", "items": NODE_REF, "minItems": 1},
+    "direction": {"type": "string", "enum": ["row", "column", "grid"],
+                  "description": "row = left to right, column = top to bottom, grid = wrap into columns."},
+    "columns": {"type": "integer", "description": "Grid only. Default: about square."},
+    "gap": {"type": "number", "description": "Pixels between nodes. Default 40."},
+    "origin": POS,
+    "fit_group_id": {"type": "integer", "description": "Afterwards refit this group around the nodes."},
 }
 CONNECT = {
     "from_node": NODE_REF, "from_output": SLOT, "to_node": NODE_REF, "to_input": SLOT,
@@ -45,7 +56,9 @@ CREATE_GROUP = {
     "color": {"type": "string", "description": "CSS hex, e.g. #3f789e."},
     "font_size": {"type": "number"},
 }
-UPDATE_GROUP = dict(CREATE_GROUP, group_id={"type": "integer"})
+UPDATE_GROUP = dict(CREATE_GROUP, group_id={"type": "integer"},
+                    fit_to_contents={"type": "boolean",
+                                     "description": "Refit the box around the nodes currently inside it."})
 REMOVE_GROUP = {"group_id": {"type": "integer"},
                 "remove_nodes": {"type": "boolean", "description": "Also delete the nodes inside."}}
 
@@ -55,6 +68,7 @@ _OPS = {
     "update_node": (UPDATE_NODE, ["node_id"]), "remove_nodes": (REMOVE_NODES, ["node_ids"]),
     "create_group": (CREATE_GROUP, ["title"]), "update_group": (UPDATE_GROUP, ["group_id"]),
     "remove_group": (REMOVE_GROUP, ["group_id"]),
+    "arrange_nodes": (ARRANGE, ["node_ids"]),
 }
 
 
@@ -77,15 +91,33 @@ def register_all():
     # ---- read ----
     register(Tool(
         "get_workflow",
-        "Compact outline of the workflow open on the canvas: nodes (id, type, title, pos, size, mode, "
-        "widget values), links and groups. Call before editing and after big edits.",
-        {"node_ids": {"type": "array", "items": {"type": "integer"},
-                      "description": "Only these nodes (default: all)."},
-         "include_widgets": {"type": "boolean", "description": "Default true."}}))
+        "Outline of the workflow open on the canvas: groups, nodes, links, widget values. Detail is "
+        "reduced automatically so the whole graph always fits (the first line says which level you "
+        "got): full = positions + widget values; outline = ids, types, titles, links; index = node "
+        "lists per group. On big graphs narrow with group / query / node_ids to get full detail of "
+        "one area, and re-check edits with those filters instead of re-reading everything.",
+        {"node_ids": {"type": "array", "items": NODE_REF, "description": "Only these nodes."},
+         "group": {"description": "Only nodes inside this group (group id or part of its title)."},
+         "query": {"type": "string", "description": "Only nodes whose title or type contains this text."},
+         "detail": {"type": "string", "enum": ["auto", "full", "outline", "index"],
+                    "description": "Default auto: the most detailed level that fits."},
+         "include_widgets": {"type": "boolean", "description": "Default true (full detail only)."}},
+        max_chars=48000))
     register(Tool(
-        "get_node", "Full detail of one node on the canvas: every input/output slot with type and "
-        "links, every widget with type, value and allowed options.",
-        {"node_id": {"type": "integer"}}, ["node_id"]))
+        "get_node", "Full detail of one or several nodes on the canvas: every input/output slot "
+        "with type and links, every widget with type, value and allowed options. Pass node_ids to "
+        "inspect up to 25 nodes in ONE call instead of calling this repeatedly.",
+        {"node_id": NODE_REF, "node_ids": {"type": "array", "items": NODE_REF, "maxItems": 25}},
+        max_chars=48000))
+    register(Tool(
+        "trace_connections",
+        "Follow links from a node: everything upstream (what feeds it), downstream (what it "
+        "feeds) or both, as a list of node ids, types and titles with their hop distance. Use it to "
+        "find 'everything related to X' before removing or rewiring a chain.",
+        {"node_id": NODE_REF,
+         "direction": {"type": "string", "enum": ["upstream", "downstream", "both"]},
+         "depth": {"type": "integer", "description": "Max hops, default 6."}},
+        ["node_id"]))
     register(Tool(
         "search_node_types",
         "Search installed node types by keywords. Returns: class name | category | pack | socket types. "
@@ -127,6 +159,11 @@ def register_all():
                   UPDATE_GROUP, ["group_id"], risk="edit"))
     register(Tool("remove_group", "Delete a group box (nodes stay unless remove_nodes).",
                   REMOVE_GROUP, ["group_id"], risk="edit"))
+    register(Tool(
+        "arrange_nodes", "Tidy nodes into a row, column or grid using their real sizes (no manual "
+        "coordinate math, no overlaps). Optionally refit a group around them afterwards. Use this "
+        "to put nodes neatly inside a group or to make a group horizontal/vertical.",
+        ARRANGE, ["node_ids"], risk="edit"))
     register(Tool(
         "edit_graph",
         "Apply many edits in one call and ONE undo step. Each operation is {\"op\": <name>, …args} "

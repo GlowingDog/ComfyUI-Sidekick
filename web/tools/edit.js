@@ -3,16 +3,35 @@
 import { app, ToolError, TITLE_H, graph, allNodes, allGroups, getLink, nodeById, groupById, nodeRect, setNodePos, tick } from "./graphCtx.js";
 import { autoMatch, describeSlots, resolveSlot } from "./connectMatch.js";
 import { coerceWidgetValue } from "./widgetCoerce.js";
-import { comboValues, describeNode, slotInfo, visibleWidgets } from "./read.js";
+import { comboValues, describeNode, groupMembers, slotInfo, visibleWidgets } from "./read.js";
+import { arrange, freeSpotInArea, overlaps, union } from "./layoutMath.js";
 
 const GAP_X = 60;
 const GAP_Y = 40;
+const GROUP_PAD = 20;
 const MODE_IDS = { active: 0, muted: 2, bypassed: 4 };
 
 // ---------- placement ----------
 
-function overlaps(a, b, pad = 10) {
-  return a[0] < b[0] + b[2] + pad && a[0] + a[2] + pad > b[0] && a[1] < b[1] + b[3] + pad && a[1] + a[3] + pad > b[1];
+const groupRect = (group) => [...(group._bounding ?? [...group.pos, ...group.size])];
+const groupHead = (group) => (group.font_size ?? 24) + 12; // title strip at the top of a group box
+
+function setGroupRect(group, b) {
+  group.pos = [b[0], b[1]];
+  group.size = [Math.max(b[2], 140), Math.max(b[3], 80)];
+  group.recomputeInsideNodes?.();
+}
+
+/** First free spot inside a group; the group grows to contain the node if it has to. */
+function placeInGroup(node, group) {
+  const th = TITLE_H();
+  const [gx, gy, gw, gh] = groupRect(group);
+  const area = [gx + GROUP_PAD, gy + groupHead(group) + GROUP_PAD, gw - 2 * GROUP_PAD, gh];
+  const taken = allNodes().filter((n) => n !== node).map(nodeRect);
+  const w = node.size[0], h = node.size[1] + th;
+  const [x, y] = freeSpotInArea(area, w, h, taken, { gapX: GAP_X, gapY: GAP_Y });
+  const grown = union([[gx, gy, gw, gh], [x - GROUP_PAD, y - GROUP_PAD, w + 2 * GROUP_PAD, h + 2 * GROUP_PAD]]);
+  return { pos: [x, y + th], grown };
 }
 
 /** Slide a rect along `axis` until it is clear of every other node. */
@@ -92,12 +111,20 @@ export function setWidgetValues({ node_id, values }) {
 
 export async function addNode(args) {
   const { type, title, widgets } = args;
+  const hasGroup = args.group_id !== undefined && args.group_id !== null;
+  const group = hasGroup ? groupById(args.group_id) : null; // validate before creating anything
   const node = window.LiteGraph.createNode(type);
   if (!node) throw new ToolError(`Unknown node type "${type}". Find the exact class name with search_node_types.`);
   if (title) node.title = String(title);
   graph().add(node);
   await tick(); // dynamic widgets/slots materialize after add
-  setNodePos(node, choosePos(node, args));
+  if (group && !Array.isArray(args.pos) && args.near?.node_id === undefined) {
+    const spot = placeInGroup(node, group);
+    setNodePos(node, spot.pos);
+    setGroupRect(group, spot.grown);
+  } else {
+    setNodePos(node, choosePos(node, args));
+  }
   let widgetResult;
   if (widgets && Object.keys(widgets).length) widgetResult = setWidgets(node, widgets);
   const out = describeNode(node, { brief: true });
@@ -192,18 +219,19 @@ function fitBounds(nodes, fontSize) {
   return [x0, y0, x1 - x0, y1 - y0];
 }
 
-function applyGroup(group, { title, node_ids, bounds, color, font_size }) {
+function applyGroup(group, { title, node_ids, bounds, color, font_size, fit_to_contents }) {
   if (title !== undefined) group.title = String(title);
   if (font_size !== undefined) group.font_size = Number(font_size);
   if (color !== undefined) group.color = color || undefined;
   let b = null;
   if (Array.isArray(node_ids) && node_ids.length) b = fitBounds(node_ids.map(nodeById), group.font_size ?? 24);
   else if (Array.isArray(bounds) && bounds.length === 4) b = bounds.map(Number);
-  if (b) {
-    group.pos = [b[0], b[1]];
-    group.size = [Math.max(b[2], 140), Math.max(b[3], 80)];
+  else if (fit_to_contents) {
+    const members = groupMembers(group);
+    if (!members.length) throw new ToolError(`Group #${group.id} has no nodes inside it to fit around.`);
+    b = fitBounds(members, group.font_size ?? 24);
   }
-  group.recomputeInsideNodes?.();
+  if (b) setGroupRect(group, b); else group.recomputeInsideNodes?.();
 }
 
 function describeGroup(group) {
@@ -237,8 +265,9 @@ export function removeGroup({ group_id, remove_nodes }) {
   const group = groupById(group_id);
   let removed = [];
   if (remove_nodes) {
-    group.recomputeInsideNodes?.();
-    const inside = [...(group._children ?? group._nodes ?? [])].filter((c) => c && c.id !== undefined && allNodes().includes(c));
+    // Own geometry test, the same one get_workflow reports as "nodes:" of the group. LiteGraph's
+    // cached group._children is stale right after programmatic moves (it left the nodes behind).
+    const inside = groupMembers(group);
     for (const n of inside) graph().remove(n);
     removed = inside.map((n) => n.id);
   }
@@ -246,11 +275,45 @@ export function removeGroup({ group_id, remove_nodes }) {
   return { removed_group: group_id, removed_nodes: removed };
 }
 
+// ---------- arrange ----------
+
+export function arrangeNodes({ node_ids, direction = "row", columns, gap, origin, fit_group_id }) {
+  if (!Array.isArray(node_ids) || !node_ids.length) throw new ToolError("node_ids must be a non-empty array.");
+  if (!["row", "column", "grid"].includes(direction)) throw new ToolError("direction must be row, column or grid.");
+  const group = fit_group_id !== undefined && fit_group_id !== null ? groupById(fit_group_id) : null;
+  const all = node_ids.map(nodeById);
+  const pinned = all.filter((n) => n.flags?.pinned || n.pinned);
+  const nodes = all.filter((n) => !pinned.includes(n));
+  if (!nodes.length) throw new ToolError("All of these nodes are pinned; unpin them first (update_node pinned=false).");
+  const th = TITLE_H();
+  const rects = nodes.map(nodeRect);
+  // Default origin: keep the block where it is — or, when fitting a group, its inner top-left.
+  let start = Array.isArray(origin) ? [Number(origin[0]), Number(origin[1])] : null;
+  if (!start && group) {
+    const [gx, gy] = groupRect(group);
+    start = [gx + GROUP_PAD, gy + groupHead(group) + GROUP_PAD];
+  }
+  if (!start) { const u = union(rects); start = [u[0], u[1]]; }
+  const spots = arrange(nodes.map((n, i) => ({ id: n.id, w: rects[i][2], h: rects[i][3] })), { direction, columns, gap, origin: start });
+  nodes.forEach((n, i) => setNodePos(n, [spots[i].x, spots[i].y + th]));
+
+  const placed = nodes.map(nodeRect);
+  const inSet = new Set(nodes);
+  const collisions = allNodes().filter((o) => !inSet.has(o) && placed.some((r) => overlaps(r, nodeRect(o), 0))).map((o) => o.id);
+  const out = { moved: nodes.map((n) => ({ id: n.id, pos: [Math.round(n.pos[0]), Math.round(n.pos[1])] })), bounds: union(placed).map(Math.round) };
+  if (group) { setGroupRect(group, fitBounds(nodes, group.font_size ?? 24)); out.group = describeGroup(group); }
+  if (pinned.length) out.skipped_pinned = pinned.map((n) => n.id);
+  if (collisions.length) out.overlaps_nodes = collisions;
+  if (collisions.length) out.note = "The arranged block overlaps other nodes; pass a different origin or move those nodes.";
+  return out;
+}
+
 // ---------- batch ----------
 
 const OPS = {
   add_node: addNode, connect: connectNodes, disconnect, set_widgets: setWidgetValues, update_node: updateNode,
   remove_nodes: removeNodes, create_group: createGroup, update_group: updateGroup, remove_group: removeGroup,
+  arrange_nodes: arrangeNodes,
 };
 
 function resolveRefs(op, refs) {

@@ -22,6 +22,17 @@ class Tool:
     timeout: float = 60.0
     silent: bool = False  # no tool card in the chat (the tool draws its own UI)
     hide_for: tuple = ()  # provider kinds that should not see this tool
+    max_chars: int = MAX_RESULT_CHARS  # result cap; big-graph readers budget themselves below it
+    # Per-call risk for multiplexed tools (run_command, workflow_tabs): args -> read|edit|risky
+    risk_fn: Optional[Callable[[dict], str]] = None
+
+    def risk_of(self, args):
+        if self.risk_fn is None:
+            return self.risk
+        try:
+            return self.risk_fn(args) or self.risk
+        except Exception:
+            return "risky"  # unknown shape: be careful
 
     def schema(self):
         return {"type": "object", "properties": self.params, "required": list(self.required)}
@@ -69,31 +80,40 @@ def to_mcp(tools):
     return [{"name": t.name, "description": t.description, "inputSchema": t.schema()} for t in tools]
 
 
-def _to_text(result):
+def _to_text(result, limit=MAX_RESULT_CHARS):
     if result is None:
         text = "ok"
     elif isinstance(result, str):
         text = result
     else:
         text = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
-    if len(text) > MAX_RESULT_CHARS:
-        text = (text[:MAX_RESULT_CHARS] +
-                f"\n…[truncated {len(text) - MAX_RESULT_CHARS} chars; narrow the request]")
+    if len(text) > limit:
+        text = text[:limit] + f"\n…[truncated {len(text) - limit} chars; narrow the request]"
     return text
+
+
+def _grant_key(tool, args):
+    """What "Allow for this chat" covers. For multiplexed tools the grant is for
+    this exact call shape (one command id), never for the whole tool."""
+    if tool.risk_fn is None:
+        return tool.name
+    return tool.name + ":" + json.dumps(args, sort_keys=True, default=str)[:300]
 
 
 async def _check_permission(ctx, tool, args):
     """Returns None when allowed, else the refusal text for the model."""
     mode = ctx.cfg.get("permission_mode", "confirm")
-    if mode == "readonly" and tool.risk != "read":
+    risk = tool.risk_of(args)
+    if mode == "readonly" and risk != "read":
         return ("Denied: Sidekick is in read-only mode. Describe the change instead, or ask the "
                 "user to switch the permission mode in Sidekick settings.")
-    if tool.risk != "risky" or mode == "auto" or tool.name in ctx.session.allowed_tools:
+    key = _grant_key(tool, args)
+    if risk != "risky" or mode == "auto" or key in ctx.session.allowed_tools:
         return None
     answer = await pending.ask(ctx.session, "permission", tool=tool.name, args=args)
     decision = (answer or {}).get("decision")
     if decision == "allow_session":
-        ctx.session.allowed_tools.add(tool.name)
+        ctx.session.allowed_tools.add(key)
         return None
     if decision == "allow":
         return None
@@ -133,7 +153,7 @@ async def dispatch(ctx, name, args):
             result = await tool.handler(ctx, args)
         else:
             result = await bridge.call(ctx.client_id, name, args, tool.timeout)
-        return finish(True, _to_text(result))
+        return finish(True, _to_text(result, tool.max_chars))
     except asyncio.CancelledError:
         finish(False, "Stopped.", "interrupted")
         raise

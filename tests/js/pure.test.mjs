@@ -58,6 +58,33 @@ test("coerceWidgetValue", () => {
   assert.equal(coerceWidgetValue({ type: "customtext" }, 42).value, "42");
 });
 
+test("arrange: row, column, grid use real sizes and never overlap", async () => {
+  const { arrange, overlaps, freeSpotInArea, union } = await import("../../web/tools/layoutMath.js");
+  const rects = [{ id: 1, w: 400, h: 230 }, { id: 2, w: 270, h: 100 }, { id: 3, w: 400, h: 230 }, { id: 4, w: 140, h: 76 }, { id: 5, w: 300, h: 300 }];
+  const placed = (spots) => spots.map((s, i) => [s.x, s.y, rects[i].w, rects[i].h]);
+  const clean = (rs) => rs.every((a, i) => rs.every((b, j) => i === j || !overlaps(a, b, 0)));
+
+  const row = arrange(rects, { direction: "row", gap: 50, origin: [100, 200] });
+  assert.deepEqual(row.map((s) => s.x), [100, 550, 870, 1320, 1510]);
+  assert.ok(row.every((s) => s.y === 200) && clean(placed(row)));
+
+  const col = arrange(rects, { direction: "column", gap: 40, origin: [0, 0] });
+  assert.deepEqual(col.map((s) => s.y), [0, 270, 410, 680, 796]);
+  assert.ok(clean(placed(col)));
+
+  const grid = arrange(rects, { direction: "grid", columns: 2, gap: 40 });
+  assert.deepEqual(grid.map((s) => [s.x, s.y]), [[0, 0], [440, 0], [0, 270], [440, 270], [0, 540]]);
+  assert.ok(clean(placed(grid)));
+  assert.equal(arrange(rects, { direction: "grid" }).filter((s) => s.y === 0).length, 3); // ~square: 3 columns
+
+  assert.deepEqual(union([[0, 0, 10, 10], [20, 30, 10, 10]]), [0, 0, 30, 40]);
+  // inside an 900-wide area with one node already there: next to it; when the row is full: wraps below
+  const taken = [[0, 0, 400, 200]];
+  assert.deepEqual(freeSpotInArea([0, 0, 900, 600], 400, 200, taken, { gapX: 60, gapY: 40 }), [460, 0]);
+  taken.push([460, 0, 400, 200]);
+  assert.deepEqual(freeSpotInArea([0, 0, 900, 600], 400, 200, taken, { gapX: 60, gapY: 40 }), [0, 240]);
+});
+
 test("markdown escapes html and only links http(s)", () => {
   const html = renderMarkdown('<img src=x onerror=alert(1)> **bold** `a<b` [x](javascript:alert(1)) [ok](https://a.b/c)');
   assert.ok(!html.includes("<img"));

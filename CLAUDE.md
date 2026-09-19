@@ -47,6 +47,12 @@ Browser (web/)                                    Python (sidekick/, inside the 
 - All node moves go through `graphCtx.setNodePos` (Vue-nodes mode routes geometry through an internal layout store; behaviour there is still unverified — P3).
 - `nodeCreated` fires before `graph.add()`; dynamic widgets appear a tick after add → `addNode` awaits `tick()` before setting widgets. Third-party packs may veto/rewire links → `connectNodes` verifies the link and returns slot diagnostics on failure.
 - PrimeIcons classes do not work inside the Shadow root; use text glyphs / inline SVG.
+- **Node ids are strings** in this build — compare with `String()`. `LGraphGroup` geometry setters throw unless the group is already in a graph. LiteGraph's `group._children` is **stale right after programmatic moves**: group membership always comes from `read.groupMembers` (node centre inside the box), for reads and edits alike.
+- Shadow DOM retargets events, so the panel stops `keydown/keyup/keypress/paste/copy/cut` at its root; otherwise ComfyUI/LiteGraph shortcuts can fire while the user types. `h()` flattens children with `flat(Infinity)` (a one-level flat once rendered cards as `[object HTMLDivElement]`).
+- Big graphs: `get_workflow` budgets itself (`full` → `outline` → `index`, 40k chars) under its 48k `Tool.max_chars`; never rely on blind truncation — a truncated outline cost a real session ~40 extra calls.
+- `run_command` / `workflow_tabs` are never wrapped in `withUndo` (tab switches mid-call would corrupt the other tab's history). Their per-call risk lives in `tooldefs/ui.py` (`Tool.risk_fn`); permission grants for them are per exact call, not per tool.
+- Commands: `app.extensionManager.command.commands` (id, label getter, source) + `.execute(id, {errorHandler})`. Workflows: `app.extensionManager.workflow` (`openWorkflows`, `activeWorkflow`, `persistedWorkflows`, `syncWorkflows`); switching = `await wf.load()` if needed, then `app.loadGraphData(clone(wf.activeState), true, true, wf)`.
+- Live-test browser tools without restarting the server: in the Browser pane, `const { runTool } = await import('/extensions/ComfyUI-Sidekick/tools/index.js')` (same module instance ComfyUI loaded). Python tool-def changes still need a ComfyUI restart before an LLM can see them.
 
 ## Tests
 - Python (run each file; `tests/py` is not an importable package name): `..\..\..\python_embeded\python.exe tests\py\test_core.py`, `…\test_openai_loop.py`, `…\test_codex.py`
