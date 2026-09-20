@@ -1,6 +1,6 @@
 # ComfyUI-Sidekick — project guide for Claude
 
-**Read this and [PLAN.md](PLAN.md) first.** This file is the stable architecture + rules; PLAN.md is the live task list (keep it updated as you work).
+**Read this and [PLAN.md](PLAN.md) first.** This file is the stable architecture + rules; PLAN.md is the live task list (keep it updated as you work). PLAN.md is local only: it is in `.gitignore` and not part of the published repo.
 
 ## What it is
 An AI agent chat panel inside ComfyUI. The brain is the **Claude CLI**, the **Codex CLI** (headless, using the user's own CLI logins) or any **OpenAI-compatible API**. It edits the open workflow **live** through tools — no page refresh, every tool call is one Ctrl+Z step.

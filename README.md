@@ -79,7 +79,7 @@ Other guard rails:
 
 ## For developers
 
-`CLAUDE.md` describes the architecture and the rules of the code base, `PLAN.md` what was built, verified and left open. Tests: `python tests/py/<file>.py` (with ComfyUI's Python) and `node --test tests/js/pure.test.mjs`; in the browser console: `const t = await import("/extensions/ComfyUI-Sidekick/dev/paneTests.js"); await t.run()`.
+`CLAUDE.md` describes the architecture and the rules of the code base. Tests: `python tests/py/<file>.py` (with ComfyUI's Python) and `node --test tests/js/pure.test.mjs`; in the browser console: `const t = await import("/extensions/ComfyUI-Sidekick/dev/paneTests.js"); await t.run()`.
 
 ## Credits
 
